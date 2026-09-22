@@ -90,7 +90,11 @@ def login_with_backend() -> str:
         details = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Login failed (HTTP {error.code}): {details}") from error
     except URLError as error:
-        raise RuntimeError(f"Login failed: {error.reason}") from error
+        raise RuntimeError(
+            f"Login failed: could not connect to {PREVIEW_API_URL}. "
+            "Start the backend or set PREVIEW_API_URL to the running backend URL. "
+            f"Details: {error.reason}"
+        ) from error
 
     access_token = session.get("access_token")
     if not access_token:

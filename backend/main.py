@@ -22,7 +22,7 @@ ALLOWED_EMAILS = {
 }
 MEDIA_BUCKET = os.environ["MEDIA_BUCKET"]
 CORS_ORIGINS = [origin.strip() for origin in os.environ["CORS_ORIGINS"].split(",") if origin.strip()]
-FRONTEND_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 app = FastAPI(title="adlv Media API")

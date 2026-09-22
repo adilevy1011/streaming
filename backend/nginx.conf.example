@@ -14,7 +14,7 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    root /var/www/your-app;
+    root /var/www/streaming/frontend;
     index index.html;
 
     if ($request_uri ~* "^(.+)\.html$") {

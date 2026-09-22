@@ -12,7 +12,7 @@ Browser
   | HTTPS
   v
 nginx
-  |-- static files: index.html, watch.html, *.js
+  |-- static files: frontend/index.html, frontend/watch.html, frontend/*.js
   |
   |-- /api/*
   v
@@ -43,7 +43,8 @@ scripts/
 supabase/
   migrations/              Database, RLS, bucket, and storage policies
   config.toml               Local Supabase CLI configuration
-index.html                  Main library page
-watch.html                  Video player page
-app.js, watch.js, api.js    Frontend application code
+frontend/
+  index.html                Main library page
+  watch.html                Video player page
+  app.js, watch.js, api.js  Frontend application code
 ```

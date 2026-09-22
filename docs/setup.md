@@ -96,7 +96,7 @@ sudo mkdir -p /var/www
 sudo git clone https://github.com/adilevy1011/streaming /var/www/media-streamer
 ```
 
-Set `root /var/www/media-streamer;`. Proxy `/api/` to Uvicorn at `127.0.0.1:8000`; serve other paths from the repository root.
+Set `root /var/www/streaming/frontend;`. Proxy `/api/` to Uvicorn at `127.0.0.1:8000`; serve other paths from the `frontend/` directory.
 
 ```bash
 sudo nginx -t

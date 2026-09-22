@@ -196,6 +196,33 @@ def list_files(token: str, path: str = "") -> list[dict[str, Any]]:
     return results
 
 
+def matching_subtitle(token: str, video_path: str) -> str:
+    safe_path = str(PurePosixPath("/" + video_path)).lstrip("/")
+    if not safe_path or safe_path.startswith(".."):
+        raise HTTPException(status_code=400, detail="Invalid media path.")
+
+    video_name = PurePosixPath(safe_path).name
+    video_stem = video_name.rsplit(".", 1)[0].lower()
+    directory = str(PurePosixPath(safe_path).parent)
+    if directory == ".":
+        directory = ""
+
+    # Only inspect the video's own directory instead of recursively listing the
+    # whole bucket. This keeps subtitle discovery fast for large libraries.
+    offset = 0
+    page_size = 1000
+    while True:
+        items = storage_list(directory, token, page_size, offset)
+        for item in items:
+            name = item.get("name", "")
+            if item.get("id") is not None and name.lower() == f"{video_stem}.srt":
+                return f"{directory}/{name}" if directory else name
+        if len(items) < page_size:
+            break
+        offset += page_size
+    return ""
+
+
 @app.get("/api/media")
 def media(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
     return list_videos(token)
@@ -204,6 +231,11 @@ def media(_: Any = Depends(current_user), token: str = Depends(current_token)) -
 @app.get("/api/media/files")
 def files(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
     return list_files(token)
+
+
+@app.get("/api/media/subtitle")
+def subtitle(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, str]:
+    return {"path": matching_subtitle(token, video_path)}
 
 
 @app.get("/api/previews")

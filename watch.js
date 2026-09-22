@@ -182,25 +182,9 @@ function updateTimelinePreview(event) {
     applySpriteFrame(time);
 }
 
-function getSubtitleCandidatePath(videoPath, fileName) {
-    const directory = videoPath.includes('/') ? videoPath.slice(0, videoPath.lastIndexOf('/')) : '';
-    return directory ? `${directory}/${fileName}` : fileName;
-}
-
 async function findMatchingSubtitle(videoPath) {
-    const videoFileName = videoPath.split('/').pop() || videoPath;
-    const videoStem = videoFileName.replace(/\.[^.]+$/, '').toLowerCase();
-    const data = await apiRequest('/media/files');
-    const expectedPath = getSubtitleCandidatePath(videoPath, `${videoStem}.srt`).toLowerCase();
-    const subtitle = data.find(item => {
-        const itemPath = (item.path || '').toLowerCase();
-        const itemName = itemPath.split('/').pop();
-        return itemPath === expectedPath || (
-            itemPath.slice(0, Math.max(0, itemPath.lastIndexOf('/'))) === expectedPath.slice(0, Math.max(0, expectedPath.lastIndexOf('/'))) &&
-            itemName === `${videoStem}.srt`
-        );
-    });
-    return subtitle?.path || '';
+    const data = await apiRequest(`/media/subtitle?video_path=${encodeURIComponent(videoPath)}`);
+    return data?.path || '';
 }
 
 function srtToWebVtt(srtText) {

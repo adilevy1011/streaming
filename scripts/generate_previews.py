@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import json
 import math
 import mimetypes
@@ -60,16 +61,61 @@ def load_dotenv(path: Path) -> None:
 
 load_dotenv(ROOT / "backend" / ".env")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-BUCKET = os.environ["MEDIA_BUCKET"]
+BUCKET = os.environ.get("MEDIA_BUCKET", "")
+PREVIEW_API_URL = os.environ.get("PREVIEW_API_URL", "http://127.0.0.1:8000").rstrip("/")
 
-if not SUPABASE_URL or not SERVICE_ROLE_KEY:
-    raise SystemExit("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in backend/.env")
+if not SUPABASE_URL or not BUCKET:
+    raise SystemExit("Missing SUPABASE_URL or MEDIA_BUCKET in backend/.env")
 
-AUTH_HEADERS = {
-    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
-    "apikey": SERVICE_ROLE_KEY,
-}
+AUTH_HEADERS: dict[str, str] = {}
+
+
+def login_with_backend() -> str:
+    """Authenticate through the same backend route used by the web app."""
+    email = input("Email: ").strip()
+    password = getpass.getpass("Password: ")
+    body = json.dumps({"email": email, "password": password}).encode()
+    request = Request(
+        f"{PREVIEW_API_URL}/api/auth/login",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            session = json.load(response)
+    except HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Login failed (HTTP {error.code}): {details}") from error
+    except URLError as error:
+        raise RuntimeError(f"Login failed: {error.reason}") from error
+
+    access_token = session.get("access_token")
+    if not access_token:
+        raise RuntimeError("Login failed: the backend did not return an access token.")
+    return access_token
+
+
+def configure_auth() -> None:
+    global AUTH_HEADERS
+    if SERVICE_ROLE_KEY:
+        AUTH_HEADERS = {
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            "apikey": SERVICE_ROLE_KEY,
+        }
+        return
+    if not SUPABASE_ANON_KEY:
+        raise RuntimeError(
+            "Missing SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY in backend/.env"
+        )
+    log("SUPABASE_SERVICE_ROLE_KEY is not set; sign in to use the anon key.")
+    access_token = login_with_backend()
+    AUTH_HEADERS = {
+        "Authorization": f"Bearer {access_token}",
+        "apikey": SUPABASE_ANON_KEY,
+    }
 
 
 def api_request(path: str, method: str = "GET", body: bytes | None = None,
@@ -304,6 +350,11 @@ def main() -> int:
     args = parser.parse_args()
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         print("ERROR: ffmpeg and ffprobe must be installed and available on PATH", file=sys.stderr)
+        return 2
+    try:
+        configure_auth()
+    except (RuntimeError, EOFError, KeyboardInterrupt) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
         return 2
 
     rows = preview_rows()

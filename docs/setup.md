@@ -41,7 +41,6 @@ Create `backend/.env` locally and keep it private:
 ```env
 SUPABASE_URL=https://<YOUR_PROJECT_REF>.supabase.co
 SUPABASE_ANON_KEY=<YOUR_SUPABASE_ANON_KEY>
-SUPABASE_SERVICE_ROLE_KEY=<YOUR_SUPABASE_SERVICE_ROLE_KEY>
 ALLOWED_EMAILS=<you@example.com>
 MEDIA_BUCKET=media
 CORS_ORIGINS=https://<YOUR_DOMAIN>

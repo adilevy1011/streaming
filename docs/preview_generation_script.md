@@ -9,7 +9,15 @@ The `scripts/generate_previews.py` worker creates timeline preview sprite sheets
 - A configured `backend/.env` containing the Supabase URL and service-role key.
 - The Supabase schema and storage policies applied with the setup instructions.
 
-The service-role key is required because the worker reads source videos and uploads generated preview files. Keep it private and run the worker only in a trusted environment.
+The service-role key is required because the worker reads source videos and uploads generated preview files. 
+
+So you would have to add 
+```env
+SUPABASE_SERVICE_ROLE_KEY=<YOUR_SUPABASE_SERVICE_ROLE_KEY>
+```
+To your backend/.env
+
+The service role key bypasses all levels of security so make sure you run this script in a trusted environment.
 
 ## Run the worker
 

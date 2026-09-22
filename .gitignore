@@ -1,0 +1,14 @@
+# Supabase
+.branches
+.temp
+
+# dotenvx
+.env*
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local testing
+run-local.*

@@ -1,0 +1,15 @@
+[Unit]
+Description=adlv Media API backend
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/streaming/backend
+EnvironmentFile=/etc/streaming/backend.env
+ExecStart=/var/www/streaming/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

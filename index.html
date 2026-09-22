@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adlv Media Stream</title>
+    <style>
+        :root { color-scheme: dark; }
+        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; margin: 0; padding: 24px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .hidden { display: none; }
+        .site-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .site-header h1 { margin: 0; }
+        input, button { padding: 11px 13px; margin: 5px 0; box-sizing: border-box; border-radius: 8px; border: 1px solid #333; }
+        input { width: 100%; background: #191919; color: #fff; }
+        button { background: #3ecf8e; border: none; color: #000; font-weight: bold; cursor: pointer; }
+        button:hover { filter: brightness(1.08); }
+        .toolbar { display: flex; gap: 10px; align-items: center; margin: 18px 0; }
+        .toolbar input { flex: 1; margin: 0; }
+        .toolbar button { width: auto; margin: 0; }
+        .main-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 22px 0 12px; border-bottom: 1px solid #2b2b2b; padding-bottom: 12px; }
+        .nav-button { background: #1e1e1e; color: #ddd; border: 1px solid #333; }
+        .nav-button.active { background: #3ecf8e; color: #000; border-color: #3ecf8e; }
+        .view-header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+        .back-button { background: #1e1e1e; color: #fff; width: auto; }
+        .date { color: #888; font-size: 0.85rem; white-space: nowrap; }
+        .media-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+        .media-item { padding: 14px; background: #1e1e1e; border: 1px solid #292929; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+        .media-item:hover, .media-item:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
+        .group-heading { grid-column: 1 / -1; color: #fff; font-size: 1.1rem; font-weight: 700; margin: 18px 0 0; padding: 10px 4px 2px; border-bottom: 1px solid #333; }
+        .preview { width: 120px; height: 68px; flex: 0 0 120px; object-fit: cover; border-radius: 5px; background: #080808; pointer-events: none; }
+        .media-copy { min-width: 0; flex: 1; }
+        .library-card { min-height: 68px; }
+        .folder-icon { font-size: 1.7rem; flex: 0 0 34px; }
+        .media-name { min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal; line-height: 1.35; }
+        .play-label { color: #3ecf8e; white-space: nowrap; }
+        .muted { color: #999; }
+        .continue-section { margin: 22px 0 26px; }
+        .continue-section h2 { margin-bottom: 10px; }
+        .continue-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; list-style: none; padding: 0; margin: 0; }
+        .continue-item { padding: 14px; background: #1e1e1e; border: 1px solid #292929; border-radius: 8px; cursor: pointer; }
+        .continue-item:hover, .continue-item:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
+        .continue-name { display: block; overflow-wrap: anywhere; line-height: 1.35; }
+        .progress-track { height: 5px; margin-top: 10px; background: #333; border-radius: 5px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #3ecf8e; }
+        .loading-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #333; border-top-color: #3ecf8e; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        video { width: 100%; max-height: 70vh; margin-top: 15px; border-radius: 8px; background: #000; }
+        #auth-error, #media-status { min-height: 1.4em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="site-header">
+            <h1>Adlv Stream</h1>
+            <button id="logout-button" class="hidden" onclick="logout()" style="width: auto; background: #ff4444; color: #fff;">Log Out</button>
+        </header>
+        <div id="auth-section">
+            <h3>Sign In</h3>
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="password" placeholder="Password">
+            <button onclick="login()">Log In</button>
+            <p id="auth-error" style="color: #ff7777;"></p>
+        </div>
+
+        <div id="stream-section" class="hidden">
+            <nav class="main-nav" aria-label="Media views">
+                <button class="nav-button active" data-view="my-library" onclick="showLibrary('my-library')">My Library</button>
+                <button class="nav-button" data-view="movies" onclick="showLibrary('movies')">Movies</button>
+                <button class="nav-button" data-view="shows" onclick="showLibrary('shows')">TV Shows</button>
+                <button class="nav-button" data-view="all" onclick="showLibrary('all')">All Videos</button>
+            </nav>
+
+            <section id="continue-section" class="continue-section hidden" aria-labelledby="continue-title">
+                <h2 id="continue-title">Continue watching</h2>
+                <ul id="continue-list" class="continue-list"></ul>
+            </section>
+
+            <section id="watch-again-section" class="continue-section hidden" aria-labelledby="watch-again-title">
+                <h2 id="watch-again-title">Watch again</h2>
+                <ul id="watch-again-list" class="continue-list"></ul>
+            </section>
+
+            <section id="library-view">
+                <div class="view-header">
+                    <h2 id="library-title">Movies</h2>
+                    <button onclick="loadMedia()">Refresh</button>
+                </div>
+                <div class="toolbar">
+                    <input id="search" type="search" placeholder="Search this library..." oninput="renderMedia()">
+                </div>
+                <p id="media-status" class="muted"></p>
+                <ul id="media-list" class="media-list"></ul>
+            </section>
+            <!--
+
+                <button class="back-button" onclick="backToLibrary()">← Back to library</button>
+            -->
+        </div>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -12,7 +12,7 @@ The `scripts/generate_previews.py` worker creates timeline preview sprite sheets
 When `SUPABASE_SERVICE_ROLE_KEY` is configured, the worker uses it for
 unattended trusted-job execution. If it is missing, the worker prompts for an
 application login through `/api/auth/login` and uses the authenticated user's
-access token with `SUPABASE_ANON_KEY` instead. Set `PREVIEW_API_URL` when the
+access token with `SUPABASE_ANON_KEY` instead. Set `PREVIEW_API_URL` in `backend/.env` when the
 backend is not running at `http://127.0.0.1:8000`.
 
 For service-role mode, add:

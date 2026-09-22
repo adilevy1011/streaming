@@ -1,4 +1,4 @@
-# Media Streamer
+# ADLV Media Streamer
 
 A self-hosted media player built with a static frontend, a small FastAPI backend, Supabase Auth, Supabase Storage, and PostgreSQL.
 

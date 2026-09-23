@@ -36,8 +36,6 @@ server {
         add_header Pragma "no-cache" always;
     }
 
-    # Always revalidate frontend code and markup so deployments are picked up
-    # instead of being served from a browser or intermediary cache.
     location ~* \.(?:html|js)$ {
         try_files $uri =404;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;

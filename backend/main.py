@@ -30,7 +30,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Range"],
     expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type"],
 )
@@ -51,6 +51,10 @@ class ProgressRequest(BaseModel):
     duration_seconds: float | None = Field(default=None, ge=0)
     completed: bool = False
     updated_at: str | None = None
+
+
+class ProfileRequest(BaseModel):
+    subtitles_enabled: bool
 
 
 def reject_unallowed(email: str) -> None:
@@ -138,6 +142,42 @@ def refresh(payload: RefreshRequest) -> dict[str, Any]:
 @app.get("/api/auth/session")
 def session(user: Any = Depends(current_user)) -> dict[str, Any]:
     return {"user": {"id": user.id, "email": user.email}}
+
+
+@app.get("/api/profile")
+def profile(user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    params = {
+        "select": "user_id,subtitles_enabled",
+        "user_id": f"eq.{user.id}",
+        "limit": "1",
+    }
+    data = supabase_request("GET", "/rest/v1/profiles", token, params=params) or []
+    if data:
+        return data[0]
+
+    row = {"user_id": user.id, "subtitles_enabled": False}
+    created = supabase_request(
+        "POST",
+        "/rest/v1/profiles",
+        token,
+        headers={"Prefer": "return=representation"},
+        json=row,
+    ) or []
+    return created[0] if created else row
+
+
+@app.patch("/api/profile")
+def update_profile(payload: ProfileRequest, user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    row = {"user_id": user.id, "subtitles_enabled": payload.subtitles_enabled}
+    data = supabase_request(
+        "POST",
+        "/rest/v1/profiles",
+        token,
+        params={"on_conflict": "user_id"},
+        headers={"Prefer": "resolution=merge-duplicates,return=representation"},
+        json=row,
+    ) or []
+    return data[0] if data else row
 
 
 def is_video(name: str, metadata: dict[str, Any] | None = None) -> bool:

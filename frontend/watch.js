@@ -20,6 +20,7 @@ const fullscreenToggle = document.getElementById('fullscreen-toggle');
 let currentUserId = '';
 let progressSaveTimer;
 let progressHydrated = false;
+let subtitlesEnabled = false;
 let subtitleObjectUrl = '';
 let previewManifest = null;
 let previewSpriteUrls = [];
@@ -187,6 +188,28 @@ async function findMatchingSubtitle(videoPath) {
     return data?.path || '';
 }
 
+async function loadProfile() {
+    try {
+        const profile = await apiRequest('/profile');
+        subtitlesEnabled = profile?.subtitles_enabled === true;
+    } catch (error) {
+        console.warn('Unable to load profile preferences', error);
+        subtitlesEnabled = false;
+    }
+}
+
+async function saveSubtitlePreference(enabled) {
+    subtitlesEnabled = enabled;
+    try {
+        await apiRequest('/profile', {
+            method: 'PATCH',
+            body: JSON.stringify({ subtitles_enabled: enabled })
+        });
+    } catch (error) {
+        console.warn('Unable to save subtitle preference', error);
+    }
+}
+
 function srtToWebVtt(srtText) {
     const normalized = srtText.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
     const cues = normalized.split(/\n{2,}/).map(block => {
@@ -202,7 +225,7 @@ function srtToWebVtt(srtText) {
 
 async function attachMatchingSubtitle(videoPath) {
     captionsOption.classList.add('hidden');
-    captionsToggle.checked = false;
+    captionsToggle.checked = subtitlesEnabled;
     try {
         const subtitlePath = await findMatchingSubtitle(videoPath);
         if (!subtitlePath) return;
@@ -217,7 +240,7 @@ async function attachMatchingSubtitle(videoPath) {
         track.srclang = 'en';
         track.src = subtitleObjectUrl;
         player.appendChild(track);
-        track.track.mode = 'disabled';
+        track.track.mode = subtitlesEnabled ? 'showing' : 'disabled';
         captionsOption.classList.remove('hidden');
     } catch (error) {
         console.warn('Unable to load matching subtitles', error);
@@ -253,6 +276,7 @@ async function startWatching() {
         return;
     }
     currentUserId = session.user.id;
+    await loadProfile();
     const videoName = (path.split('/').pop() || path).replace(/\.[^.]+$/, '');
     document.getElementById('now-playing').innerText = videoName;
     document.title = `${videoName} | Adlv Media Stream`;
@@ -336,7 +360,9 @@ settingsToggle.addEventListener('click', event => {
 });
 playbackRate.addEventListener('change', () => { player.playbackRate = Number(playbackRate.value); });
 captionsToggle.addEventListener('change', () => {
-    [...player.textTracks].forEach(track => { track.mode = captionsToggle.checked ? 'showing' : 'disabled'; });
+    const enabled = captionsToggle.checked;
+    [...player.textTracks].forEach(track => { track.mode = enabled ? 'showing' : 'disabled'; });
+    void saveSubtitlePreference(enabled);
 });
 fullscreenToggle.addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();

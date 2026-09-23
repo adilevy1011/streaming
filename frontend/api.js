@@ -23,7 +23,7 @@ async function apiRequest(path, options = {}) {
     const token = getAccessToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    const response = await fetch(`${API_BASE}${path}`, { ...options, headers, cache: 'no-store' });
     if (!response.ok) {
         let detail = `Request failed (${response.status})`;
         try { detail = (await response.json()).detail || detail; } catch (_) { /* keep status */ }

@@ -229,7 +229,10 @@ async function attachMatchingSubtitle(videoPath) {
     try {
         const subtitlePath = await findMatchingSubtitle(videoPath);
         if (!subtitlePath) return;
-        const response = await fetch(`/api/media/file/${subtitlePath.split('/').map(encodeURIComponent).join('/')}`, { headers: { Authorization: `Bearer ${getAccessToken()}` } });
+        const response = await fetch(`/api/media/file/${subtitlePath.split('/').map(encodeURIComponent).join('/')}`, {
+            headers: { Authorization: `Bearer ${getAccessToken()}` },
+            cache: 'no-store'
+        });
         if (!response.ok) throw new Error(`Subtitle request failed (${response.status})`);
         const webVtt = srtToWebVtt(await response.text());
         if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);

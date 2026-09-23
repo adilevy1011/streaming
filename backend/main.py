@@ -36,6 +36,15 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def prevent_stale_api_responses(request: Request, call_next: Any) -> Response:
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str

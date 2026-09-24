@@ -216,7 +216,10 @@ async function findMatchingSubtitle(videoPath) {
 async function loadCredits(videoPath) {
     try {
         const data = await apiRequest(`/media/credits?video_path=${encodeURIComponent(videoPath)}`);
-        const timestamp = Number(data?.credits_start_seconds);
+        const rawTimestamp = data?.credits_start_seconds;
+        const timestamp = rawTimestamp === null || rawTimestamp === undefined || rawTimestamp === ''
+            ? NaN
+            : Number(rawTimestamp);
         creditsStartSeconds = Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
         creditTimestampAvailable = creditsStartSeconds !== null;
         creditsButton.disabled = creditsStartSeconds === null;

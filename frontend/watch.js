@@ -31,6 +31,7 @@ let subtitleObjectUrl = '';
 let previewManifest = null;
 let previewSpriteUrls = [];
 let creditsStartSeconds = null;
+let creditTimestampAvailable = false;
 let nextEpisodeFilesPromise = null;
 let nextEpisodeLookupPromise = null;
 let nextEpisodePath = null;
@@ -45,10 +46,9 @@ completionMessage.classList.add('hidden');
 completionActions.classList.add('hidden');
 
 function completionThresholdReached() {
-    if (creditsStartSeconds !== null) {
-        return Number.isFinite(player.currentTime) && player.currentTime >= creditsStartSeconds;
-    }
-    return player.ended;
+    return creditTimestampAvailable
+        && Number.isFinite(player.currentTime)
+        && player.currentTime >= creditsStartSeconds;
 }
 
 function showPlayerControls() {
@@ -218,10 +218,12 @@ async function loadCredits(videoPath) {
         const data = await apiRequest(`/media/credits?video_path=${encodeURIComponent(videoPath)}`);
         const timestamp = Number(data?.credits_start_seconds);
         creditsStartSeconds = Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
+        creditTimestampAvailable = creditsStartSeconds !== null;
         creditsButton.disabled = creditsStartSeconds === null;
         creditsButton.title = creditsStartSeconds === null ? 'Credit timestamp is not available' : `Start at ${formatTime(creditsStartSeconds)}`;
     } catch (error) {
         creditsStartSeconds = null;
+        creditTimestampAvailable = false;
         creditsButton.disabled = true;
         console.warn('Unable to load credit timestamp', error);
     }
@@ -340,7 +342,7 @@ function updateCompletionActions() {
     completionActions.classList.add('hidden');
 }
 
-async function playNextEpisode() {
+async function playNextEpisode(automatic = false) {
     if (libraryButton.disabled) return;
     libraryButton.disabled = true;
     libraryButton.innerText = 'Finding next episode…';
@@ -348,6 +350,10 @@ async function playNextEpisode() {
     try {
         const nextEpisode = nextEpisodePath || await (nextEpisodeLookupPromise || findNextEpisode(path, nextEpisodeFilesPromise));
         if (!nextEpisode) {
+            if (automatic) {
+                returnToLibrary();
+                return;
+            }
             libraryButton.disabled = false;
             libraryButton.innerText = 'Next episode';
             libraryButton.removeAttribute('aria-busy');
@@ -512,6 +518,10 @@ async function startWatching() {
     };
     player.onended = async () => {
         await saveCurrentProgress(true);
+        if (!creditTimestampAvailable) {
+            await playNextEpisode(true);
+            return;
+        }
         showCompletionActions();
     };
 

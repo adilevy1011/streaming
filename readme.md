@@ -41,6 +41,7 @@ backend/
   nginx.conf.example       Safe nginx template
 scripts/
   generate_previews.py     Preview generation and cleanup worker
+  detect_credits.py        Finds the timestamp the credits start
 supabase/
   migrations/              Database, RLS, bucket, and storage policies
   config.toml               Local Supabase CLI configuration

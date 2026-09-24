@@ -160,5 +160,9 @@ sudo nginx -t && sudo systemctl reload nginx
 - Never commit `.env`, service-role keys, passwords, JWT secrets, private keys, or certificates.
 - Never put `SUPABASE_SERVICE_ROLE_KEY` on the frontend.
 - Keep the Storage bucket private and use HTTPS in production.
+- I recommend disabling new user sign up in Supabade if your goal is a private server. 
 - Restrict environment-file permissions.
 - Review storage policies before opening the project to untrusted users.
+### Security note
+- The application by default has two mechanisms for blocking unexpected traffic: '''env ALLOWED_EMAILS ''' configured in '''backend/.env''' and Supabase auth itself.
+- If you do want to expose your server to the public you will need to make sure Supabase enables new users, and disbale the ALLOWED_EMAILS check in the auth routes. 

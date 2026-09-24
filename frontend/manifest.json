@@ -1,0 +1,17 @@
+{
+    "name": "ADLV Media Streamer",
+    "short_name": "ADLV Stream",
+    "description": "A self-hosted media library and video streaming player.",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#121212",
+    "theme_color": "#3ecf8e",
+    "icons": [
+        {
+            "src": "./app_icon.png",
+            "type": "image/png",
+            "sizes": "818x818"
+        }
+    ]
+}

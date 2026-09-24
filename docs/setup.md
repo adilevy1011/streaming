@@ -85,10 +85,9 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The health endpoint is `htt
 
 ## 5. Upload media
 
-Upload videos to the `media` bucket in Supabase Dashboard → Storage. Subdirectories become library categories.
+Upload videos to the `media` bucket in Supabase Dashboard → Storage. Subdirectories become library categories. [See how the library is organized](how_to_use.md).
 
 For preview generation or credit detection, see [Scripts](scripts.md).
-- Note: preview generation is required for credit detection. 
 
 ## 6. Deploy with nginx and HTTPS
 

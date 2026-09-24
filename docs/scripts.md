@@ -66,7 +66,8 @@ mp4, m4v, webm, mov, mkv, avi, ogv, mpeg, mpg, ts
 # Credit detection script
 
 The `scripts/detect_credits.py` worker analyzes the preview sprite sheets and
-records the detected end-credit range in the Supabase `video_credits` table.
+records the detected end-credit range in the Supabase `video_credits` table. Preview generation is required for credit detection. 
+
 Run it from the repository root after preview generation:
 
 ```bash

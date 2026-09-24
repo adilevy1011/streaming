@@ -47,7 +47,7 @@ Inception.mp4
 Inception.png
 ```
 
-Supported artwork formats include `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, and `.avif`. The image is shown without cropping; if it is unavailable, the generated sprite preview is used for the video.
+Supported artwork formats include `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, and `.avif`. The image is shown without cropping; if it is unavailable, the generated sprite preview is used for the video. [See how to generate sprite previews](scripts.md)
 
 An image beside a folder is used as that folder’s card artwork. The image must match the folder name:
 

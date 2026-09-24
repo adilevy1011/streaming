@@ -7,6 +7,7 @@ import json
 import math
 import os
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -16,6 +17,19 @@ from urllib.request import Request, urlopen
 import cv2
 import easyocr
 import numpy as np
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"torch\.quantize_per_tensor.*deprecated",
+    category=UserWarning,
+    module=r"torch\.ao\.nn\.quantized\.dynamic\.modules\.rnn",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"'pin_memory' argument is set as true but no accelerator is found.*",
+    category=UserWarning,
+    module=r"torch\.utils\.data\.dataloader",
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO_EXTENSIONS = {"mp4", "m4v", "webm", "mov", "mkv", "avi", "ogv", "mpeg", "mpg", "ts"}
@@ -162,7 +176,7 @@ def get_ocr_reader() -> easyocr.Reader:
     global ocr_reader
     if ocr_reader is None:
         print("[*] Initializing local OCR engine...", flush=True)
-        ocr_reader = easyocr.Reader(["en"], gpu=False)
+        ocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
     return ocr_reader
 
 

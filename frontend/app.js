@@ -1,7 +1,6 @@
 let allMedia = [];
 let activeView = 'my-library';
-let selectedShow = '';
-let selectedSeason = '';
+let selectedPath = '';
 let previewObserver;
 let previewGeneration = 0;
 let previewManifests = new Map();
@@ -111,6 +110,7 @@ async function loadMedia() {
     const status = document.getElementById('media-status');
     allMedia = loadCachedMedia();
     mediaScanComplete = false;
+    renderNavigation();
     activeProgressByPath = new Map();
     listElement.innerHTML = '';
     status.innerHTML = '<span class="loading-spinner" role="status" aria-label="Loading videos"></span>';
@@ -144,8 +144,9 @@ async function loadMedia() {
             try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
         }
         saveCachedMedia(allMedia);
-        renderMedia();
         mediaScanComplete = true;
+        renderNavigation();
+        renderMedia();
         renderContinueWatching();
         renderWatchAgain();
         if (generation !== mediaLoadGeneration) return;
@@ -172,26 +173,51 @@ async function loadPreviewManifests() {
 }
 
 function mediaCategory(file) {
-    const root = file.path.split('/')[0].toLowerCase();
-    if (root === 'movies' || root === 'movie') return 'movies';
-    if (['shows', 'show', 'tv', 'tv-shows', 'tv_shows', 'tv shows', 'tvshows', 'television'].includes(root)) return 'shows';
-    return 'other';
+    return file.path.split('/')[0] || '';
+}
+
+function mediaCategoryLabel(path) {
+    return path.split('/').filter(Boolean).pop() || path;
+}
+
+function capitalizeFirst(value) {
+    return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function mediaRoots() {
+    return [...new Set(allMedia.map(mediaCategory).filter(Boolean))].sort(naturalCompare);
+}
+
+function renderNavigation() {
+    const tabs = document.getElementById('media-tabs');
+    if (!tabs) return;
+    tabs.innerHTML = '';
+    mediaRoots().forEach(root => {
+        const button = document.createElement('button');
+        button.className = 'nav-button';
+        button.dataset.view = root;
+        button.innerText = capitalizeFirst(mediaCategoryLabel(root));
+        button.onclick = () => showLibrary(root);
+        tabs.appendChild(button);
+    });
+    document.querySelectorAll('.nav-button').forEach(button => {
+        button.classList.toggle('active', button.dataset.view === activeView || (activeView !== 'my-library' && activeView !== 'all' && button.dataset.view === selectedPath.split('/')[0]));
+    });
 }
 
 function showLibrary(view) {
     activeView = view;
     const isMyLibrary = view === 'my-library';
+    if (!isMyLibrary && view !== 'all') selectedPath = view;
     document.getElementById('library-view').classList.toggle('hidden', isMyLibrary);
-    document.querySelectorAll('.nav-button').forEach(button => {
-        button.classList.toggle('active', button.dataset.view === view);
-    });
+    renderNavigation();
     if (isMyLibrary) {
         renderContinueWatching();
         renderWatchAgain();
         return;
     }
-    document.getElementById('library-title').innerText = view === 'shows' ? 'TV Shows' : view === 'all' ? 'All Videos' : 'Movies';
-    document.getElementById('search').placeholder = `Search ${view === 'shows' ? 'TV shows' : view === 'all' ? 'videos' : 'movies'}...`;
+    document.getElementById('library-title').innerText = view === 'all' ? 'All Videos' : mediaCategoryLabel(view);
+    document.getElementById('search').placeholder = `Search ${view === 'all' ? 'videos' : mediaCategoryLabel(view)}...`;
     renderContinueWatching();
     renderWatchAgain();
     renderMedia();
@@ -365,53 +391,23 @@ function naturalCompare(left, right) {
     return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function compareMedia(left, right) {
-    if (activeView === 'shows' || activeView === 'episodes') {
-        const leftParts = left.path.split('/');
-        const rightParts = right.path.split('/');
-        const showOrder = naturalCompare(leftParts[1] || '', rightParts[1] || '');
-        if (showOrder !== 0) return showOrder;
-        const seasonOrder = naturalCompare(leftParts[2] || '', rightParts[2] || '');
-        if (seasonOrder !== 0) return seasonOrder;
-        return naturalCompare(leftParts.slice(3).join('/'), rightParts.slice(3).join('/'));
-    }
-    return new Date(right.uploadedAt || 0) - new Date(left.uploadedAt || 0);
-}
-
-function setShowsNav() {
-    document.querySelectorAll('.nav-button').forEach(button => {
-        button.classList.toggle('active', button.dataset.view === 'shows');
-    });
-}
-
-function showSeasons(show) {
-    selectedShow = show;
-    selectedSeason = '';
-    activeView = 'seasons';
-    document.getElementById('search').value = '';
-    setShowsNav();
-    document.getElementById('library-title').innerText = show;
-    document.getElementById('search').placeholder = 'Search seasons...';
-    renderMedia();
-}
-
-function showEpisodes(season) {
-    selectedSeason = season;
-    activeView = 'episodes';
-    document.getElementById('search').value = '';
-    setShowsNav();
-    document.getElementById('library-title').innerText = `${selectedShow} / ${season}`;
-    document.getElementById('search').placeholder = 'Search episodes...';
-    renderMedia();
-}
-
-function renderFolderButton(label, subtitle, onClick) {
+function renderFolderButton(label, subtitle, onClick, artwork = null) {
     const li = document.createElement('li');
     li.className = 'media-item library-card';
     li.tabIndex = 0;
-    const icon = document.createElement('span');
-    icon.className = 'folder-icon';
-    icon.innerText = '\u{1F4C1}';
+    let leading = document.createElement('span');
+    if (artwork?.path) {
+        leading = document.createElement('div');
+        leading.className = 'preview';
+        leading.dataset.previewKind = 'image';
+        leading.dataset.previewImagePath = artwork.path;
+        leading.dataset.previewImageUpdatedAt = artwork.updatedAt || '';
+        leading.dataset.previewFallback = 'folder';
+        leading.setAttribute('aria-label', `Preview for ${label}`);
+    } else {
+        leading.className = 'folder-icon';
+        leading.innerText = '\u{1F4C1}';
+    }
     const copy = document.createElement('span');
     copy.className = 'media-copy';
     const title = document.createElement('span');
@@ -421,10 +417,25 @@ function renderFolderButton(label, subtitle, onClick) {
     detail.className = 'muted';
     detail.innerText = subtitle;
     copy.append(title, document.createElement('br'), detail);
-    li.append(icon, copy);
+    li.append(leading, copy);
     li.onclick = onClick;
     li.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') onClick(); };
     return li;
+}
+
+function folderArtwork(folderPath) {
+    const file = allMedia.find(item => item.folderArtworks?.[folderPath]);
+    const artwork = file?.folderArtworks?.[folderPath];
+    return artwork ? { path: artwork.path, updatedAt: artwork.updatedAt } : null;
+}
+
+function openFolder(folderPath) {
+    selectedPath = folderPath;
+    document.getElementById('search').value = '';
+    document.getElementById('library-title').innerText = mediaCategoryLabel(folderPath);
+    document.getElementById('search').placeholder = `Search ${mediaCategoryLabel(folderPath)}...`;
+    renderNavigation();
+    renderMedia();
 }
 
 function setSpriteFrame(element, manifest, spriteUrl, timeSeconds = 0) {
@@ -440,6 +451,20 @@ function setSpriteFrame(element, manifest, spriteUrl, timeSeconds = 0) {
     element.dataset.spriteSheetIndex = String(sheetIndex);
 }
 
+function mediaFileUrl(path, cache = '', version = '') {
+    const cacheQuery = cache ? `&cache=${encodeURIComponent(cache)}` : '';
+    const versionQuery = version ? `&v=${encodeURIComponent(version)}` : '';
+    return `/api/media/file/${path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}${cacheQuery}${versionQuery}`;
+}
+
+function loadSpritePreview(preview, manifest) {
+    const spritePath = manifest?.sheets?.[0];
+    if (!manifest || !spritePath) return;
+    preview.classList.remove('preview-loading');
+    setSpriteFrame(preview, manifest, mediaFileUrl(spritePath));
+    preview.dataset.previewLoaded = 'true';
+}
+
 async function addVideoPreviews() {
     const generation = ++previewGeneration;
     if (previewObserver) previewObserver.disconnect();
@@ -453,11 +478,36 @@ async function addVideoPreviews() {
         activeLoads += 1;
         try {
             const manifest = previewManifests.get(preview.dataset.previewPath);
-            const spritePath = manifest?.sheets?.[0];
-            if (!manifest || !spritePath) return;
             if (generation !== previewGeneration || !document.contains(preview)) return;
-            setSpriteFrame(preview, manifest, `/api/media/file/${spritePath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`);
-            preview.dataset.previewLoaded = 'true';
+            const imagePath = preview.dataset.previewImagePath;
+            if (imagePath) {
+                const image = new Image();
+                const imageVersion = preview.dataset.previewImageUpdatedAt;
+                image.onload = () => {
+                    if (generation !== previewGeneration || !document.contains(preview)) return;
+                    preview.classList.remove('preview-loading');
+                    preview.style.backgroundImage = `url("${mediaFileUrl(imagePath, 'preview', imageVersion)}")`;
+                    preview.style.backgroundSize = 'contain';
+                    preview.style.backgroundRepeat = 'no-repeat';
+                    preview.style.backgroundPosition = 'center';
+                    preview.dataset.previewLoaded = 'true';
+                };
+                image.onerror = () => {
+                    preview.classList.remove('preview-loading');
+                    if (preview.dataset.previewFallback === 'folder') {
+                        preview.className = 'folder-icon';
+                        preview.innerText = '\u{1F4C1}';
+                    }
+                };
+                image.src = mediaFileUrl(imagePath, 'preview', imageVersion);
+                if (manifest?.sheets?.[0]) {
+                    loadSpritePreview(preview, manifest);
+                } else {
+                    preview.classList.add('preview-loading');
+                }
+            } else {
+                loadSpritePreview(preview, manifest);
+            }
         } finally {
             activeLoads -= 1;
             loadNextPreview();
@@ -476,7 +526,7 @@ async function addVideoPreviews() {
             loadNextPreview();
         });
     }, { rootMargin: '120px' });
-    document.querySelectorAll('[data-preview-kind="sprite"]').forEach(preview => previewObserver.observe(preview));
+    document.querySelectorAll('[data-preview-kind="sprite"], [data-preview-kind="image"]').forEach(preview => previewObserver.observe(preview));
 }
 
 
@@ -486,37 +536,54 @@ function renderMedia() {
     const query = document.getElementById('search').value.trim().toLowerCase();
     listElement.innerHTML = '';
 
-    if (activeView === 'shows') {
-        const shows = [...new Set(allMedia.filter(file => mediaCategory(file) === 'shows').map(file => file.path.split('/')[1]).filter(Boolean))]
-            .filter(show => show.toLowerCase().includes(query)).sort(naturalCompare);
-        shows.forEach(show => {
-            const seasons = new Set(allMedia.filter(file => file.path.split('/')[1] === show).map(file => file.path.split('/')[2]));
-            listElement.appendChild(renderFolderButton(show, `${seasons.size} season${seasons.size === 1 ? '' : 's'}`, () => showSeasons(show)));
+    const browsingCategory = activeView !== 'my-library' && activeView !== 'all';
+    const browsePath = browsingCategory ? selectedPath : '';
+    const folderPaths = new Set();
+    if (browsingCategory) {
+        const prefix = `${browsePath}/`;
+        allMedia.forEach(file => {
+            if (!file.path.startsWith(prefix)) return;
+            const remainder = file.path.slice(prefix.length).split('/');
+            if (remainder.length > 1) folderPaths.add(`${browsePath}/${remainder[0]}`);
         });
-        return;
     }
 
-    if (activeView === 'seasons') {
-        const seasons = [...new Set(allMedia.filter(file => file.path.split('/')[1] === selectedShow).map(file => file.path.split('/')[2]).filter(Boolean))]
-            .filter(season => season.toLowerCase().includes(query)).sort(naturalCompare);
-        listElement.appendChild(renderFolderButton('\u2190 All TV Shows', 'Back', () => showLibrary('shows')));
-        seasons.forEach(season => {
-            const count = allMedia.filter(file => file.path.split('/')[1] === selectedShow && file.path.split('/')[2] === season).length;
-            listElement.appendChild(renderFolderButton(season, `${count} episode${count === 1 ? '' : 's'}`, () => showEpisodes(season)));
-        });
-        return;
+    if (browsingCategory && browsePath !== activeView) {
+        const parentPath = browsePath.split('/').slice(0, -1).join('/');
+        listElement.appendChild(renderFolderButton('\u2190 Back', 'Back', () => openFolder(parentPath)));
     }
+
+    const flattenedFolderPaths = new Set([...folderPaths].filter(folderPath =>
+        allMedia.filter(file => file.path.startsWith(`${folderPath}/`)).length === 1
+    ));
+    const flattenedVideoPaths = new Set();
+    flattenedFolderPaths.forEach(folderPath => {
+        allMedia.forEach(file => {
+            if (file.path.startsWith(`${folderPath}/`)) flattenedVideoPaths.add(file.path);
+        });
+    });
+
+    [...folderPaths]
+        .filter(folderPath => !flattenedFolderPaths.has(folderPath))
+        .filter(folderPath => mediaCategoryLabel(folderPath).toLowerCase().includes(query))
+        .sort(naturalCompare)
+        .forEach(folderPath => {
+            const count = allMedia.filter(file => file.path.startsWith(`${folderPath}/`)).length;
+            listElement.appendChild(renderFolderButton(
+                mediaCategoryLabel(folderPath),
+                `${count} video${count === 1 ? '' : 's'}`,
+                () => openFolder(folderPath),
+                folderArtwork(folderPath)
+            ));
+        });
 
     const visibleMedia = allMedia
-        .filter(file => activeView === 'episodes'
-            ? file.path.split('/')[1] === selectedShow && file.path.split('/')[2] === selectedSeason
-            : activeView === 'all' || mediaCategory(file) === activeView)
+        .filter(file => activeView === 'all'
+            || (browsingCategory && file.path.split('/').slice(0, -1).join('/') === browsePath)
+            || flattenedVideoPaths.has(file.path))
         .filter(file => file.path.toLowerCase().includes(query))
-        .sort(activeView === 'episodes' ? compareMedia : (a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
+        .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
 
-    if (activeView === 'episodes') {
-        listElement.appendChild(renderFolderButton('\u2190 Seasons', 'Back', () => showSeasons(selectedShow)));
-    }
     visibleMedia.forEach(file => {
         const li = document.createElement('li');
         li.className = 'media-item library-card';
@@ -524,9 +591,14 @@ function renderMedia() {
         const manifest = previewManifests.get(file.path);
         const preview = document.createElement('div');
         preview.className = 'preview';
-        if (manifest) {
-            preview.dataset.previewKind = 'sprite';
+        const artwork = file.previewImagePath;
+        if (artwork || manifest) {
+            preview.dataset.previewKind = artwork ? 'image' : 'sprite';
             preview.dataset.previewPath = file.path;
+            if (artwork) {
+                preview.dataset.previewImagePath = artwork;
+                preview.dataset.previewImageUpdatedAt = file.previewImageUpdatedAt || '';
+            }
             preview.setAttribute('aria-label', `Preview for ${file.name}`);
         } else {
             preview.setAttribute('aria-label', `Preview unavailable for ${file.name}`);
@@ -536,7 +608,7 @@ function renderMedia() {
         const name = document.createElement('span');
         name.className = 'media-name';
         name.title = file.path;
-        name.innerText = activeView === 'episodes' || activeView === 'movies'
+        name.innerText = activeView !== 'all'
             ? file.name.replace(/\.[^.]+$/, '')
             : file.path.replace(/\.[^.]+$/, '');
         copy.append(name);

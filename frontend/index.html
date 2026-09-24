@@ -28,6 +28,8 @@
         .media-item:hover, .media-item:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
         .group-heading { grid-column: 1 / -1; color: #fff; font-size: 1.1rem; font-weight: 700; margin: 18px 0 0; padding: 10px 4px 2px; border-bottom: 1px solid #333; }
         .preview { width: 120px; height: 68px; flex: 0 0 120px; object-fit: cover; border-radius: 5px; background: #080808; pointer-events: none; }
+        .preview.preview-loading { display: flex; align-items: center; justify-content: center; }
+        .preview.preview-loading::after { content: ''; width: 18px; height: 18px; border: 2px solid #333; border-top-color: #3ecf8e; border-radius: 50%; animation: spin .8s linear infinite; }
         .media-copy { min-width: 0; flex: 1; }
         .library-card { min-height: 68px; }
         .folder-icon { font-size: 1.7rem; flex: 0 0 34px; }
@@ -65,8 +67,7 @@
         <div id="stream-section" class="hidden">
             <nav class="main-nav" aria-label="Media views">
                 <button class="nav-button active" data-view="my-library" onclick="showLibrary('my-library')">My Library</button>
-                <button class="nav-button" data-view="movies" onclick="showLibrary('movies')">Movies</button>
-                <button class="nav-button" data-view="shows" onclick="showLibrary('shows')">TV Shows</button>
+                <span id="media-tabs" style="display: contents;"></span>
                 <button class="nav-button" data-view="all" onclick="showLibrary('all')">All Videos</button>
             </nav>
 
@@ -82,7 +83,7 @@
 
             <section id="library-view">
                 <div class="view-header">
-                    <h2 id="library-title">Movies</h2>
+                    <h2 id="library-title">Library</h2>
                     <button onclick="loadMedia()">Refresh</button>
                 </div>
                 <div class="toolbar">

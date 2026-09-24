@@ -42,8 +42,9 @@ app.add_middleware(
 async def prevent_stale_api_responses(request: Request, call_next: Any) -> Response:
     response = await call_next(request)
     if request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
+        if not (request.url.path.startswith("/api/media/file/") and response.headers.get("Cache-Control")):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -196,6 +197,11 @@ def is_video(name: str, metadata: dict[str, Any] | None = None) -> bool:
     return bool((metadata or {}).get("mimetype", "").startswith("video/")) or name.rsplit(".", 1)[-1].lower() in extensions
 
 
+def is_image(name: str, metadata: dict[str, Any] | None = None) -> bool:
+    extensions = {"jpg", "jpeg", "png", "webp", "gif", "avif"}
+    return bool((metadata or {}).get("mimetype", "").startswith("image/")) or name.rsplit(".", 1)[-1].lower() in extensions
+
+
 def storage_list(path: str, token: str, limit: int, offset: int) -> list[dict[str, Any]]:
     return supabase_request(
         "POST",
@@ -207,24 +213,47 @@ def storage_list(path: str, token: str, limit: int, offset: int) -> list[dict[st
 
 def iter_videos(token: str, path: str = "") -> Any:
     page_size = 1000
-    pending = deque([path])
+    pending = deque([(path, {})])
     while pending:
-        current_path = pending.popleft()
+        current_path, folder_artworks = pending.popleft()
+        directory_items = []
         offset = 0
         while True:
             items = storage_list(current_path, token, page_size, offset)
-            for item in items or []:
-                name = item.get("name", "")
-                if name == ".emptyFolderPlaceholder":
-                    continue
-                item_path = f"{current_path}/{name}" if current_path else name
-                if item.get("id") is None:
-                    pending.append(item_path)
-                elif is_video(name, item.get("metadata")):
-                    yield {"name": name, "path": item_path, "uploadedAt": item.get("created_at") or item.get("updated_at")}
+            directory_items.extend(items or [])
             if len(items or []) < page_size:
                 break
             offset += page_size
+
+        image_paths = {}
+        for item in directory_items:
+            name = item.get("name", "")
+            if item.get("id") is not None and is_image(name, item.get("metadata")):
+                image_paths[name.rsplit(".", 1)[0].casefold()] = {
+                    "path": f"{current_path}/{name}" if current_path else name,
+                    "updatedAt": item.get("updated_at") or item.get("created_at") or "",
+                }
+
+        for item in directory_items:
+            name = item.get("name", "")
+            if name == ".emptyFolderPlaceholder":
+                continue
+            item_path = f"{current_path}/{name}" if current_path else name
+            if item.get("id") is None:
+                child_folder_artworks = dict(folder_artworks)
+                image = image_paths.get(name.casefold())
+                if image:
+                    child_folder_artworks[item_path] = image
+                pending.append((item_path, child_folder_artworks))
+            elif is_video(name, item.get("metadata")):
+                video = {"name": name, "path": item_path, "uploadedAt": item.get("created_at") or item.get("updated_at")}
+                image = image_paths.get(name.rsplit(".", 1)[0].casefold())
+                if image:
+                    video["previewImagePath"] = image["path"]
+                    video["previewImageUpdatedAt"] = image["updatedAt"]
+                if folder_artworks:
+                    video["folderArtworks"] = folder_artworks
+                yield video
 
 
 def stream_videos(token: str):
@@ -365,6 +394,8 @@ async def media_file(media_path: str, request: Request, _: Any = Depends(current
         await client.aclose()
         raise HTTPException(status_code=404, detail="Media not found.")
     response_headers = {key: value for key, value in upstream.headers.items() if key.lower() in {"content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified"}}
+    if request.query_params.get("cache") == "preview":
+        response_headers["Cache-Control"] = "private, max-age=86400"
 
     async def stream() -> AsyncIterator[bytes]:
         try:

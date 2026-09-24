@@ -17,5 +17,4 @@ commands.txt
 
 # MobileNet Trainer
 data/*
-train_credit_model.py
-export_training_frames.py
+scripts/model_trainer/*

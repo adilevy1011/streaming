@@ -56,4 +56,4 @@ frontend/
 
 - You can build your own media streaming server by following the instructions in the [setup documentation](docs/setup.md). 
 - Once you got your server and [Supabase](https://supabase.com) project up and running, follow the instructions here to understand [how to organize your database](docs/how_to_use.md).
-- Once that's done you can host your own videos and share them with whoever you want! For more instruction on how to create timeline previews and run credit detections you can check out the [scripts documentation](docs/scripts.md)
+- Once that's done, you can host your own videos and share them with whoever you want! For more instruction on how to create timeline previews and run credit detections you can check out the [scripts documentation](docs/scripts.md)

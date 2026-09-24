@@ -68,6 +68,7 @@ function showPlayerControls() {
 function isPlayerFullscreen() {
     return document.fullscreenElement === videoFrame
         || document.webkitFullscreenElement === videoFrame
+        || player.webkitDisplayingFullscreen === true
         || videoFrame.matches(':fullscreen')
         || videoFrame.matches(':-webkit-full-screen');
 }
@@ -589,12 +590,32 @@ captionsToggle.addEventListener('change', () => {
     [...player.textTracks].forEach(track => { track.mode = enabled ? 'showing' : 'disabled'; });
     void saveSubtitlePreference(enabled);
 });
-fullscreenToggle.addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else videoFrame.requestFullscreen?.();
+fullscreenToggle.addEventListener('click', async () => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
+        return;
+    }
+
+    if (player.webkitDisplayingFullscreen) return;
+
+    if (videoFrame.requestFullscreen) {
+        try {
+            await videoFrame.requestFullscreen();
+            return;
+        } catch (error) {
+            console.warn('Element fullscreen unavailable; trying the iPhone video fullscreen API.', error);
+        }
+    }
+
+    if (typeof player.webkitEnterFullscreen === 'function') {
+        player.webkitEnterFullscreen();
+    }
 });
 
 document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+player.addEventListener('webkitbeginfullscreen', handleFullscreenChange);
+player.addEventListener('webkitendfullscreen', handleFullscreenChange);
 document.addEventListener('click', event => {
     if (!settingsMenu.contains(event.target) && event.target !== settingsToggle) {
         settingsMenu.classList.remove('open');

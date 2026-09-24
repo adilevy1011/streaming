@@ -1,4 +1,6 @@
 import os
+import json
+from collections import deque
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
@@ -203,25 +205,31 @@ def storage_list(path: str, token: str, limit: int, offset: int) -> list[dict[st
     ) or []
 
 
-def list_videos(token: str, path: str = "") -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    offset = 0
+def iter_videos(token: str, path: str = "") -> Any:
     page_size = 1000
-    while True:
-        items = storage_list(path, token, page_size, offset)
-        for item in items or []:
-            name = item.get("name", "")
-            if name == ".emptyFolderPlaceholder":
-                continue
-            item_path = f"{path}/{name}" if path else name
-            if item.get("id") is None:
-                results.extend(list_videos(token, item_path))
-            elif is_video(name, item.get("metadata")):
-                results.append({"name": name, "path": item_path, "uploadedAt": item.get("created_at") or item.get("updated_at")})
-        if len(items or []) < page_size:
-            break
-        offset += page_size
-    return results
+    pending = deque([path])
+    while pending:
+        current_path = pending.popleft()
+        offset = 0
+        while True:
+            items = storage_list(current_path, token, page_size, offset)
+            for item in items or []:
+                name = item.get("name", "")
+                if name == ".emptyFolderPlaceholder":
+                    continue
+                item_path = f"{current_path}/{name}" if current_path else name
+                if item.get("id") is None:
+                    pending.append(item_path)
+                elif is_video(name, item.get("metadata")):
+                    yield {"name": name, "path": item_path, "uploadedAt": item.get("created_at") or item.get("updated_at")}
+            if len(items or []) < page_size:
+                break
+            offset += page_size
+
+
+def stream_videos(token: str):
+    for video in iter_videos(token):
+        yield json.dumps(video, separators=(",", ":")) + "\n"
 
 
 def list_files(token: str, path: str = "") -> list[dict[str, Any]]:
@@ -272,9 +280,9 @@ def matching_subtitle(token: str, video_path: str) -> str:
     return ""
 
 
-@app.get("/api/media")
-def media(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
-    return list_videos(token)
+@app.get("/api/media/stream")
+def media_stream(_: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
+    return StreamingResponse(stream_videos(token), media_type="application/x-ndjson")
 
 
 @app.get("/api/media/files")
@@ -285,6 +293,23 @@ def files(_: Any = Depends(current_user), token: str = Depends(current_token)) -
 @app.get("/api/media/subtitle")
 def subtitle(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, str]:
     return {"path": matching_subtitle(token, video_path)}
+
+
+@app.get("/api/media/credits")
+def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    data = supabase_request(
+        "GET",
+        "/rest/v1/video_credits",
+        token,
+        params={
+            "select": "media_path,credits_start_seconds,credits_end_seconds",
+            "media_path": f"eq.{video_path}",
+            "limit": "1",
+        },
+    ) or []
+    if not data:
+        return {"media_path": video_path, "credits_start_seconds": None, "credits_end_seconds": None}
+    return data[0]
 
 
 @app.get("/api/previews")

@@ -16,6 +16,12 @@ const playbackRate = document.getElementById('playback-rate');
 const captionsToggle = document.getElementById('captions-toggle');
 const captionsOption = document.getElementById('captions-option');
 const fullscreenToggle = document.getElementById('fullscreen-toggle');
+const completionMessage = document.getElementById('completion-message');
+const completionActions = document.getElementById('completion-actions');
+const libraryButton = document.getElementById('library-button');
+const creditsButton = document.getElementById('credits-button');
+
+videoFrame.append(completionMessage, completionActions);
 
 let currentUserId = '';
 let progressSaveTimer;
@@ -24,9 +30,26 @@ let subtitlesEnabled = false;
 let subtitleObjectUrl = '';
 let previewManifest = null;
 let previewSpriteUrls = [];
+let creditsStartSeconds = null;
+let nextEpisodeFilesPromise = null;
+let nextEpisodeLookupPromise = null;
+let nextEpisodePath = null;
+let nextEpisodePrefetchStarted = false;
+let nextEpisodePreloader = null;
+let completionActionsDismissed = false;
 
 let controlsHideTimer = null;
 let isScrubbing = false;
+
+completionMessage.classList.add('hidden');
+completionActions.classList.add('hidden');
+
+function completionThresholdReached() {
+    if (creditsStartSeconds !== null) {
+        return Number.isFinite(player.currentTime) && player.currentTime >= creditsStartSeconds;
+    }
+    return player.ended;
+}
 
 function showPlayerControls() {
     videoFrame.classList.remove('user-idle');
@@ -102,7 +125,9 @@ async function saveProgress(position, duration, completed = false) {
 async function saveCurrentProgress(immediate = false) {
     if (!path || !Number.isFinite(player.currentTime)) return;
     const duration = Number.isFinite(player.duration) ? player.duration : null;
-    const completed = Number.isFinite(duration) && duration > 0 && player.currentTime >= duration - 10;
+    const completed = creditsStartSeconds !== null
+        ? player.currentTime >= creditsStartSeconds
+        : Number.isFinite(duration) && duration > 0 && player.currentTime >= duration - 10;
     cacheProgress(player.currentTime, duration, completed);
     if (progressSaveTimer) clearTimeout(progressSaveTimer);
     if (immediate) await saveProgress(player.currentTime, duration, completed);
@@ -186,6 +211,164 @@ function updateTimelinePreview(event) {
 async function findMatchingSubtitle(videoPath) {
     const data = await apiRequest(`/media/subtitle?video_path=${encodeURIComponent(videoPath)}`);
     return data?.path || '';
+}
+
+async function loadCredits(videoPath) {
+    try {
+        const data = await apiRequest(`/media/credits?video_path=${encodeURIComponent(videoPath)}`);
+        const timestamp = Number(data?.credits_start_seconds);
+        creditsStartSeconds = Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
+        creditsButton.disabled = creditsStartSeconds === null;
+        creditsButton.title = creditsStartSeconds === null ? 'Credit timestamp is not available' : `Start at ${formatTime(creditsStartSeconds)}`;
+    } catch (error) {
+        creditsStartSeconds = null;
+        creditsButton.disabled = true;
+        console.warn('Unable to load credit timestamp', error);
+    }
+}
+
+function episodeNumber(fileName) {
+    const seasonEpisode = fileName.match(/(s\d{1,3}e)(\d{1,3})/i);
+    if (seasonEpisode) return { value: Number(seasonEpisode[2]), width: seasonEpisode[2].length, pattern: seasonEpisode };
+    const namedEpisode = fileName.match(/((?:episode|ep)[ ._-]*)(\d{1,3})/i);
+    if (namedEpisode) return { value: Number(namedEpisode[2]), width: namedEpisode[2].length, pattern: namedEpisode };
+    const trailingNumber = fileName.match(/(\d{1,3})(?=\.[^.]+$)/);
+    if (trailingNumber) return { value: Number(trailingNumber[1]), width: trailingNumber[1].length, pattern: trailingNumber };
+    return null;
+}
+
+function replaceEpisodeNumber(fileName, episode) {
+    const info = episodeNumber(fileName);
+    if (!info) return null;
+    const replacement = String(episode).padStart(info.width, '0');
+    return fileName.slice(0, info.pattern.index + info.pattern[0].length - info.pattern[info.pattern.length - 1].length)
+        + replacement
+        + fileName.slice(info.pattern.index + info.pattern[0].length);
+}
+
+function naturalPathCompare(left, right) {
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function isTvShow(videoPath) {
+    const root = (videoPath.split('/')[0] || '').toLowerCase();
+    return ['shows', 'show', 'tv', 'tv-shows', 'tv_shows', 'tv shows', 'tvshows', 'television'].includes(root);
+}
+
+async function findNextEpisode(videoPath, filesPromise = null) {
+    const parts = videoPath.split('/');
+    if (!isTvShow(videoPath)) return null;
+
+    let files;
+    try { files = await (filesPromise || apiRequest('/media/files')); }
+    catch (error) { console.warn('Unable to find the next episode', error); return null; }
+    const available = new Set((files || []).map(file => file.path));
+    const fileName = parts[parts.length - 1] || '';
+    const currentEpisode = episodeNumber(fileName);
+    if (!currentEpisode) return null;
+    const directory = parts.slice(0, -1).join('/');
+    const nextName = replaceEpisodeNumber(fileName, currentEpisode.value + 1);
+    const sameSeasonPath = nextName ? (directory ? `${directory}/${nextName}` : nextName) : null;
+    if (sameSeasonPath && available.has(sameSeasonPath)) return sameSeasonPath;
+
+    const sameDirectoryPrefix = `${directory}/`;
+    const sameSeasonEpisode = [...available]
+        .filter(candidate => candidate.startsWith(sameDirectoryPrefix))
+        .filter(candidate => candidate.split('/').length === parts.length)
+        .filter(candidate => episodeNumber(candidate.split('/').pop() || '')?.value === currentEpisode.value + 1)
+        .sort(naturalPathCompare)[0];
+    if (sameSeasonEpisode) return sameSeasonEpisode;
+
+    const seasonIndex = parts.findIndex(part => /^season\s+\d+$/i.test(part));
+    if (seasonIndex < 0) return null;
+    const seasonNumber = Number(parts[seasonIndex].match(/\d+/)[0]);
+    const nextSeasonFiles = [...available]
+        .filter(candidate => {
+            const candidateParts = candidate.split('/');
+            const candidateSeason = candidateParts[seasonIndex] || '';
+            return candidateParts.length > seasonIndex + 1
+                && candidateParts.slice(0, seasonIndex).every((part, index) => part.toLowerCase() === (candidateParts[index] || '').toLowerCase())
+                && new RegExp(`^season\\s+${seasonNumber + 1}$`, 'i').test(candidateSeason);
+        })
+        .sort((left, right) => {
+            const leftEpisode = episodeNumber(left.split('/').pop() || '');
+            const rightEpisode = episodeNumber(right.split('/').pop() || '');
+            if (leftEpisode && rightEpisode && leftEpisode.value !== rightEpisode.value) return leftEpisode.value - rightEpisode.value;
+            if (leftEpisode) return -1;
+            if (rightEpisode) return 1;
+            return naturalPathCompare(left, right);
+        });
+    return nextSeasonFiles[0] || null;
+}
+
+function prefetchNextEpisode() {
+    if (nextEpisodePrefetchStarted || !isTvShow(path)) return;
+    nextEpisodePrefetchStarted = true;
+    nextEpisodeLookupPromise = findNextEpisode(path, nextEpisodeFilesPromise).then(nextPath => {
+        nextEpisodePath = nextPath;
+        if (!nextPath) return null;
+
+        nextEpisodePreloader = document.createElement('video');
+        nextEpisodePreloader.preload = 'auto';
+        nextEpisodePreloader.muted = true;
+        nextEpisodePreloader.playsInline = true;
+        nextEpisodePreloader.src = `/api/media/file/${nextPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`;
+        nextEpisodePreloader.style.position = 'fixed';
+        nextEpisodePreloader.style.width = '1px';
+        nextEpisodePreloader.style.height = '1px';
+        nextEpisodePreloader.style.opacity = '0';
+        nextEpisodePreloader.style.pointerEvents = 'none';
+        document.body.appendChild(nextEpisodePreloader);
+        nextEpisodePreloader.load();
+        return nextPath;
+    });
+}
+
+function showCompletionActions() {
+    if (!completionThresholdReached()) return;
+    completionMessage.classList.remove('hidden');
+    completionActions.classList.remove('hidden');
+}
+
+function updateCompletionActions() {
+    if (completionThresholdReached() && !completionActionsDismissed) {
+        showCompletionActions();
+        return;
+    }
+    if (!completionThresholdReached()) completionActionsDismissed = false;
+    completionMessage.classList.add('hidden');
+    completionActions.classList.add('hidden');
+}
+
+async function playNextEpisode() {
+    if (libraryButton.disabled) return;
+    libraryButton.disabled = true;
+    libraryButton.innerText = 'Finding next episode…';
+    libraryButton.setAttribute('aria-busy', 'true');
+    try {
+        const nextEpisode = nextEpisodePath || await (nextEpisodeLookupPromise || findNextEpisode(path, nextEpisodeFilesPromise));
+        if (!nextEpisode) {
+            libraryButton.disabled = false;
+            libraryButton.innerText = 'Next episode';
+            libraryButton.removeAttribute('aria-busy');
+            completionMessage.innerText = 'There is no next episode.';
+            return;
+        }
+        const watchPage = window.location.protocol === 'file:' ? 'watch.html' : 'watch';
+        window.location.href = `${watchPage}?path=${encodeURIComponent(nextEpisode)}`;
+    } catch (error) {
+        console.warn('Unable to start the next episode', error);
+        libraryButton.disabled = false;
+        libraryButton.innerText = 'Next episode';
+        libraryButton.removeAttribute('aria-busy');
+        completionMessage.innerText = 'Unable to find the next episode.';
+    }
+}
+
+function watchCredits() {
+    completionActionsDismissed = true;
+    completionMessage.classList.add('hidden');
+    completionActions.classList.add('hidden');
 }
 
 async function loadProfile() {
@@ -283,6 +466,16 @@ async function startWatching() {
     const videoName = (path.split('/').pop() || path).replace(/\.[^.]+$/, '');
     document.getElementById('now-playing').innerText = videoName;
     document.title = `${videoName} | Adlv Media Stream`;
+    libraryButton.onclick = returnToLibrary;
+    if (isTvShow(path)) {
+        libraryButton.innerText = 'Next episode';
+        libraryButton.classList.remove('back-button');
+        libraryButton.onclick = playNextEpisode;
+        nextEpisodeFilesPromise = apiRequest('/media/files').catch(error => {
+            console.warn('Unable to preload the media listing', error);
+            return [];
+        });
+    }
     
     player.src = `/api/media/file/${path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`;
     player.preload = 'auto';
@@ -299,6 +492,11 @@ async function startWatching() {
             previewTimeline.value = String(player.currentTime);
         }
         updatePlayerControls();
+        updateCompletionActions();
+        if (Number.isFinite(player.duration) && player.duration > 0
+            && player.currentTime / player.duration >= 0.75) {
+            prefetchNextEpisode();
+        }
         saveCurrentProgress();
     };
     player.onplay = () => {
@@ -312,9 +510,13 @@ async function startWatching() {
         showPlayerControls();
         saveCurrentProgress(true);
     };
-    player.onended = () => saveCurrentProgress(true);
+    player.onended = async () => {
+        await saveCurrentProgress(true);
+        showCompletionActions();
+    };
 
     void attachMatchingSubtitle(path);
+    await loadCredits(path);
     void restorePosition();
     player.play().catch(() => {});
 }
@@ -324,7 +526,12 @@ function returnToLibrary() {
     saveCurrentProgress(true).then(() => { window.location.href = libraryPage; });
 }
 
-player.addEventListener('seeking', () => saveCurrentProgress());
+creditsButton.addEventListener('click', watchCredits);
+
+player.addEventListener('seeking', () => {
+    updateCompletionActions();
+    saveCurrentProgress();
+});
 player.addEventListener('contextmenu', event => event.preventDefault());
 
 function handlePointerMove() {
@@ -341,7 +548,7 @@ videoFrame.addEventListener('pointerleave', () => {
     }
 });
 videoFrame.addEventListener('click', event => {
-    if (event.target.closest('.timeline-shell')) return;
+    if (event.target.closest('.timeline-shell, #completion-actions, #completion-message')) return;
     if (player.paused) player.play().catch(() => {});
     else player.pause();
 });

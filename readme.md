@@ -28,7 +28,8 @@ Supabase project
 ## Documentation
 
 - [Setup and deployment](docs/setup.md)
-- [Preview generation script](docs/preview_generation_script.md)
+- [Database Architecture](docs/database_architecture.md)
+- [Scripts](docs/scripts.md)
 
 ## Repository layout
 

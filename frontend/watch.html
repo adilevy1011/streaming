@@ -36,6 +36,10 @@
         .settings-menu label, .settings-menu select { display: block; width: 100%; margin: 4px 0; color: #fff; font-size: .85rem; }
         .settings-menu label.hidden { display: none; }
         .settings-menu select { padding: 5px; background: #333; border: 1px solid #555; border-radius: 4px; }
+        .completion-actions { position: absolute; right: 18px; bottom: 72px; z-index: 20; display: flex; flex-wrap: wrap; gap: 10px; max-width: calc(100% - 36px); padding: 10px; margin: 0; background: rgba(9, 9, 9, .88); border: 1px solid rgba(255, 255, 255, .16); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+        .completion-actions.hidden { display: none; }
+        .completion-actions button { min-width: 150px; }
+        .completion-message { display: none !important; }
     </style>
 </head>
 <body>
@@ -68,6 +72,11 @@
                     </div>
                 </div>
             </div>
+        </div>
+        <p id="completion-message" class="completion-message hidden">This video is over.</p>
+        <div id="completion-actions" class="completion-actions hidden">
+            <button id="credits-button" type="button">Watch credits</button>
+            <button id="library-button" class="back-button" type="button">← Back to library</button>
         </div>
     </div>
     <script src="api.js"></script>

@@ -30,7 +30,7 @@ supabase link --project-ref <YOUR_PROJECT_REF>
 supabase db push
 ```
 
-The migrations create `video_progress`, `video_previews`, a private `media` Storage bucket, and their RLS/storage policies. The bucket name is fixed as `media` in the SQL policies; update both the policies and `MEDIA_BUCKET` if you change it.
+The migrations create the database described here in the [Database Architecture Doc](database_architecture.md). The bucket name is fixed as `media` in the SQL policies; update both the policies and `MEDIA_BUCKET` if you change it.
 
 Create at least one user in Supabase Dashboard → Authentication → Users. The user’s email must appear in `ALLOWED_EMAILS`.
 
@@ -85,7 +85,8 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The health endpoint is `htt
 
 Upload videos to the `media` bucket in Supabase Dashboard → Storage. Subdirectories become library categories.
 
-For preview generation, see [Preview generation script](preview_generation_script.md).
+For preview generation or credit detection, see [Scripts](scripts.md).
+- Note: preview generation is required for credit detection. 
 
 ## 6. Deploy with nginx and HTTPS
 
@@ -146,14 +147,12 @@ sudo systemctl restart media-streamer
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-If needed, run the preview worker separately as described in [Preview generation script](preview_generation_script.md).
-
 ## Troubleshooting
 
 - **Missing Supabase variables:** verify `backend/.env` and the systemd `EnvironmentFile`.
 - **Unauthorized login:** verify the user, password, email allowlist, email confirmation, and matching Supabase URL/key.
 - **Empty library:** verify the `media` bucket, `MEDIA_BUCKET`, storage policies, and `/api/health`.
-- **Missing previews:** see [Preview generation script](preview_generation_script.md).
+- **Missing previews:** see [Scripts](scripts.md).
 - **nginx 502:** check `curl http://127.0.0.1:8000/api/health` and `sudo journalctl -u media-streamer -n 100 --no-pager`.
 
 ## Security checklist
@@ -163,5 +162,3 @@ If needed, run the preview worker separately as described in [Preview generation
 - Keep the Storage bucket private and use HTTPS in production.
 - Restrict environment-file permissions.
 - Review storage policies before opening the project to untrusted users.
-- Back up Supabase data before destructive schema changes.
-- Use separate Supabase projects for development and production.

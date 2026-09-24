@@ -1,4 +1,3 @@
-const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'mov', 'mkv', 'avi', 'ogv', 'mpeg', 'mpg', 'ts']);
 let allMedia = [];
 let activeView = 'my-library';
 let selectedShow = '';
@@ -10,7 +9,10 @@ let currentUserId = '';
 let mediaLoadGeneration = 0;
 let mediaScanComplete = false;
 let activeProgressByPath = new Map();
+let mediaRenderScheduled = false;
+let mediaLoadAbortController = null;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
+const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 
 async function login() {
     const email = document.getElementById('email').value;
@@ -36,36 +38,113 @@ async function checkAuth() {
     }
 }
 
-function isVideo(file) {
-    const extension = file.name.split('.').pop().toLowerCase();
-    return file.metadata?.mimetype?.startsWith('video/') || VIDEO_EXTENSIONS.has(extension);
+async function* listVideos(path = '', signal) {
+    const headers = new Headers();
+    const token = getAccessToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${API_BASE}/media/stream`, { headers, cache: 'no-store', signal });
+    if (!response.ok) {
+        let detail = `Request failed (${response.status})`;
+        try { detail = (await response.json()).detail || detail; } catch (_) {}
+        throw new Error(detail);
+    }
+    if (!response.body) throw new Error('The media stream is unavailable.');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+        while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (line.trim()) yield JSON.parse(line);
+            }
+            if (done) break;
+        }
+        if (buffer.trim()) yield JSON.parse(buffer);
+    } finally {
+        reader.releaseLock();
+    }
 }
 
-async function* listVideos(path = '') {
-    const data = await apiRequest('/media');
-    for (const item of data) yield item;
+function scheduleMediaRender() {
+    if (mediaRenderScheduled) return;
+    mediaRenderScheduled = true;
+    const render = () => {
+        mediaRenderScheduled = false;
+        renderMedia();
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(render);
+    else setTimeout(render, 0);
+}
+
+function getMediaCacheKey() {
+    return `${MEDIA_CACHE_KEY}:${currentUserId}`;
+}
+
+function loadCachedMedia() {
+    if (!currentUserId) return [];
+    try {
+        const cached = JSON.parse(localStorage.getItem(getMediaCacheKey()) || '[]');
+        return Array.isArray(cached) ? cached.filter(file => file?.path && file?.name) : [];
+    } catch (error) {
+        console.warn('Unable to read cached media library', error);
+        return [];
+    }
+}
+
+function saveCachedMedia(media) {
+    if (!currentUserId || !media.length) return;
+    try { localStorage.setItem(getMediaCacheKey(), JSON.stringify(media)); }
+    catch (error) { console.warn('Unable to cache media library', error); }
 }
 
 async function loadMedia() {
     const generation = ++mediaLoadGeneration;
+    mediaLoadAbortController?.abort();
+    mediaLoadAbortController = new AbortController();
+    const { signal } = mediaLoadAbortController;
     const listElement = document.getElementById('media-list');
     const status = document.getElementById('media-status');
-    allMedia = [];
+    allMedia = loadCachedMedia();
     mediaScanComplete = false;
     activeProgressByPath = new Map();
     listElement.innerHTML = '';
     status.innerHTML = '<span class="loading-spinner" role="status" aria-label="Loading videos"></span>';
+    if (allMedia.length) {
+        renderMedia();
+        status.innerHTML = '';
+    }
+    let receivedFreshMedia = false;
     try {
         const previewPromise = loadPreviewManifests();
         void loadContinueWatching(generation).catch(error => {
             if (generation === mediaLoadGeneration) console.warn('Unable to load Continue watching items', error);
         });
-        for await (const video of listVideos()) {
+        for await (const video of listVideos('', signal)) {
             if (generation !== mediaLoadGeneration) return;
+            if (!receivedFreshMedia) {
+                receivedFreshMedia = true;
+                allMedia = [];
+                listElement.innerHTML = '';
+                status.innerHTML = '';
+            }
             allMedia.push(video);
-            renderMedia();
-            await new Promise(resolve => setTimeout(resolve, 0));
+            scheduleMediaRender();
+
+            if (allMedia.length === 1 || allMedia.length % 50 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
         }
+        if (!receivedFreshMedia) {
+            allMedia = [];
+            try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
+        }
+        saveCachedMedia(allMedia);
+        renderMedia();
         mediaScanComplete = true;
         renderContinueWatching();
         renderWatchAgain();
@@ -75,6 +154,7 @@ async function loadMedia() {
         renderMedia();
         status.innerText = '';
     } catch (error) {
+        if (error.name === 'AbortError') return;
         if (generation !== mediaLoadGeneration) return;
         console.error(error);
         status.innerText = `Failed to load videos: ${error.message || 'unknown storage error'}`;
@@ -91,32 +171,10 @@ async function loadPreviewManifests() {
     }
 }
 
-function renderMedia() {
-    const listElement = document.getElementById('media-list');
-    const query = document.getElementById('search').value.trim().toLowerCase();
-    listElement.innerHTML = '';
-    allMedia.filter(file => file.path.toLowerCase().includes(query)).forEach(file => {
-        const li = document.createElement('li');
-        li.className = 'media-item';
-        li.tabIndex = 0;
-        const name = document.createElement('span');
-        name.className = 'media-name';
-        name.title = file.path;
-        name.innerText = file.path;
-        const play = document.createElement('span');
-        play.className = 'play-label';
-        play.innerText = '▶ Play';
-        li.append(name, play);
-        li.onclick = () => playMedia(file.path, file.path);
-        li.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(file.path, file.path); };
-        listElement.appendChild(li);
-    });
-}
-
 function mediaCategory(file) {
     const root = file.path.split('/')[0].toLowerCase();
     if (root === 'movies' || root === 'movie') return 'movies';
-    if (['shows', 'show', 'tv', 'tv-shows', 'tv_shows'].includes(root)) return 'shows';
+    if (['shows', 'show', 'tv', 'tv-shows', 'tv_shows', 'tv shows', 'tvshows', 'television'].includes(root)) return 'shows';
     return 'other';
 }
 
@@ -320,43 +378,6 @@ function compareMedia(left, right) {
     return new Date(right.uploadedAt || 0) - new Date(left.uploadedAt || 0);
 }
 
-function renderMedia() {
-    const listElement = document.getElementById('media-list');
-    const query = document.getElementById('search').value.trim().toLowerCase();
-    listElement.innerHTML = '';
-    const visibleMedia = allMedia
-        .filter(file => activeView === 'all' || mediaCategory(file) === activeView)
-        .filter(file => file.path.toLowerCase().includes(query))
-        .sort(compareMedia);
-
-    let lastGroup = '';
-    visibleMedia.forEach(file => {
-        const parts = file.path.split('/');
-        const group = activeView === 'shows' ? `${parts[1] || 'Other Shows'} / ${parts[2] || 'Other Seasons'}` : '';
-        if (group && group !== lastGroup) {
-            const heading = document.createElement('li');
-            heading.className = 'group-heading';
-            heading.innerText = group;
-            listElement.appendChild(heading);
-            lastGroup = group;
-        }
-        const li = document.createElement('li');
-        li.className = 'media-item';
-        li.tabIndex = 0;
-        const name = document.createElement('span');
-        name.className = 'media-name';
-        name.title = file.path;
-        name.innerText = activeView === 'shows' ? file.name : file.path;
-        const play = document.createElement('span');
-        play.className = 'play-label';
-        play.innerText = 'Play';
-        li.append(name, play);
-        li.onclick = () => playMedia(file.path, file.path);
-        li.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(file.path, file.path); };
-        listElement.appendChild(li);
-    });
-}
-
 function setShowsNav() {
     document.querySelectorAll('.nav-button').forEach(button => {
         button.classList.toggle('active', button.dataset.view === 'shows');
@@ -390,7 +411,7 @@ function renderFolderButton(label, subtitle, onClick) {
     li.tabIndex = 0;
     const icon = document.createElement('span');
     icon.className = 'folder-icon';
-    icon.innerText = '📁';
+    icon.innerText = '\u{1F4C1}';
     const copy = document.createElement('span');
     copy.className = 'media-copy';
     const title = document.createElement('span');
@@ -478,7 +499,7 @@ function renderMedia() {
     if (activeView === 'seasons') {
         const seasons = [...new Set(allMedia.filter(file => file.path.split('/')[1] === selectedShow).map(file => file.path.split('/')[2]).filter(Boolean))]
             .filter(season => season.toLowerCase().includes(query)).sort(naturalCompare);
-        listElement.appendChild(renderFolderButton('← All TV Shows', 'Back', () => showLibrary('shows')));
+        listElement.appendChild(renderFolderButton('\u2190 All TV Shows', 'Back', () => showLibrary('shows')));
         seasons.forEach(season => {
             const count = allMedia.filter(file => file.path.split('/')[1] === selectedShow && file.path.split('/')[2] === season).length;
             listElement.appendChild(renderFolderButton(season, `${count} episode${count === 1 ? '' : 's'}`, () => showEpisodes(season)));
@@ -494,7 +515,7 @@ function renderMedia() {
         .sort(activeView === 'episodes' ? compareMedia : (a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
 
     if (activeView === 'episodes') {
-        listElement.appendChild(renderFolderButton('← Seasons', 'Back', () => showSeasons(selectedShow)));
+        listElement.appendChild(renderFolderButton('\u2190 Seasons', 'Back', () => showSeasons(selectedShow)));
     }
     visibleMedia.forEach(file => {
         const li = document.createElement('li');
@@ -528,6 +549,10 @@ function renderMedia() {
 }
 
 function playMedia(path) {
+    mediaLoadAbortController?.abort();
+    mediaLoadAbortController = null;
+    previewGeneration += 1;
+    previewObserver?.disconnect();
     const watchPage = window.location.protocol === 'file:' ? 'watch.html' : 'watch';
     window.location.href = `${watchPage}?path=${encodeURIComponent(path)}`;
 }

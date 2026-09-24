@@ -160,7 +160,7 @@ sudo nginx -t && sudo systemctl reload nginx
 - Never commit `.env`, service-role keys, passwords, JWT secrets, private keys, or certificates.
 - Never put `SUPABASE_SERVICE_ROLE_KEY` on the frontend.
 - Keep the Storage bucket private and use HTTPS in production.
-- I recommend disabling new user sign up in Supabade if your goal is a private server. 
+- I recommend disabling new user sign up in Supabase if your goal is a private server. 
 - Restrict environment-file permissions.
 - Review storage policies before opening the project to untrusted users.
 ### Security note

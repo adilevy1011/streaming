@@ -629,6 +629,9 @@ function renderMedia() {
     const query = document.getElementById('search').value.trim().toLowerCase();
     listElement.innerHTML = '';
 
+    const existingBackButton = document.getElementById('folder-back-button');
+    if (existingBackButton) existingBackButton.remove();
+
     const browsingCategory = activeView !== 'my-library' && activeView !== 'all';
     const browsePath = browsingCategory ? selectedPath : '';
     const folderPaths = new Set();
@@ -660,7 +663,15 @@ function renderMedia() {
 
     if (browsingCategory && browsePath !== activeView) {
         const parentPath = browsePath.split('/').slice(0, -1).join('/');
-        listElement.appendChild(renderFolderButton('\u2190 Back', 'Back', () => openFolder(parentPath)));
+        const backButton = document.createElement('button');
+        backButton.id = 'folder-back-button';
+        backButton.className = 'folder-back-button';
+        backButton.type = 'button';
+        backButton.innerText = '\u2190';
+        backButton.setAttribute('aria-label', 'Back to parent folder');
+        backButton.title = 'Back to parent folder';
+        backButton.onclick = () => openFolder(parentPath);
+        listElement.parentElement.insertBefore(backButton, listElement);
     }
 
     const flattenedFolderPaths = new Set([...folderPaths].filter(folderPath => folderVideoCounts.get(folderPath) === 1));

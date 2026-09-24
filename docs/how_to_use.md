@@ -61,9 +61,5 @@ Folder artwork is inherited from the folder’s parent listing and is shown only
 
 Artwork is cached for faster loading. The application checks the bucket’s current image timestamp and automatically refreshes cached artwork when the image changes.
 
-### Notes
-- Do not be surprised if sometimes your images / folder updates don't update immediately. Video and image files are big and they take a while to fetch. 
-- If you want to make sure it your image preview/folder structure took effect, press the "Refresh library" button. It will wipe out the cache and load the updated database. 
-
 ### Disclaimer
 - This setup technically does not require a pro subscription to supabase, but Supabase does have a limit of 50mg per file on free projects. So if you build this server using a free tier project you will not be able to host large video files.

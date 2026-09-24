@@ -16,11 +16,17 @@ from supabase import Client, create_client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
-ALLOWED_EMAILS = {
-    email.strip().lower()
-    for email in os.environ["ALLOWED_EMAILS"].split(",")
-    if email.strip()
-}
+
+
+def parse_allowed_emails(value: str) -> set[str]:
+    emails = {email.strip().casefold() for email in value.split(",") if email.strip()}
+    if "*" in emails and emails != {"*"}:
+        raise RuntimeError("ALLOWED_EMAILS must be either '*' or a comma-separated list of emails, not both.")
+    return emails
+
+
+ALLOWED_EMAILS = parse_allowed_emails(os.environ["ALLOWED_EMAILS"])
+ALLOW_ALL_EMAILS = ALLOWED_EMAILS == {"*"}
 MEDIA_BUCKET = os.environ["MEDIA_BUCKET"]
 CORS_ORIGINS = [origin.strip() for origin in os.environ["CORS_ORIGINS"].split(",") if origin.strip()]
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -69,7 +75,12 @@ class ProfileRequest(BaseModel):
 
 
 def reject_unallowed(email: str) -> None:
-    if email.strip().lower() not in ALLOWED_EMAILS:
+    normalized_email = email.strip().casefold()
+    if not normalized_email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is not allowed.")
+    if ALLOW_ALL_EMAILS:
+        return
+    if normalized_email not in ALLOWED_EMAILS:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is not allowed.")
 
 

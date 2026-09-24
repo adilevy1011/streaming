@@ -53,6 +53,8 @@ ALLOWED_EMAILS=owner@example.com,viewer@example.com
 CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
 ```
 
+To allow every authenticated Supabase user with a non-blank email, set `ALLOWED_EMAILS=*` by itself. Treat this as a deliberate open-access mode: anyone who can create or use an account in the Supabase project will be able to access the media API. Do not use it for a private production deployment unless that is intentional.
+
 On Linux, restrict the file with `chmod 600 backend/.env`. Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
 
 ## 4. Run locally
@@ -165,4 +167,4 @@ sudo nginx -t && sudo systemctl reload nginx
 - Review storage policies before opening the project to untrusted users.
 ### Security note
 - The application by default has two mechanisms for blocking unexpected traffic: `ALLOWED_EMAILS` configured in `backend/.env` and Supabase auth itself.
-- If you do want to expose your server to the public you will need to make sure Supabase enables new users, and disbale the ALLOWED_EMAILS check in the auth routes. 
+- If you do want to expose your server to the public you will need to make sure Supabase enables new users, and set `ALLOWED_EMAILS=*`.

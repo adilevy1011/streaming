@@ -256,8 +256,8 @@ def iter_videos(token: str, path: str = "") -> Any:
                 yield video
 
 
-def stream_videos(token: str):
-    for video in iter_videos(token):
+def stream_videos(token: str, path: str = ""):
+    for video in iter_videos(token, path):
         yield json.dumps(video, separators=(",", ":")) + "\n"
 
 
@@ -310,8 +310,11 @@ def matching_subtitle(token: str, video_path: str) -> str:
 
 
 @app.get("/api/media/stream")
-def media_stream(_: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
-    return StreamingResponse(stream_videos(token), media_type="application/x-ndjson")
+def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
+    safe_path = str(PurePosixPath("/" + path)).lstrip("/")
+    if path and (not safe_path or safe_path.startswith("..")):
+        raise HTTPException(status_code=400, detail="Invalid media path.")
+    return StreamingResponse(stream_videos(token, safe_path), media_type="application/x-ndjson")
 
 
 @app.get("/api/media/files")

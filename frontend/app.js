@@ -10,6 +10,7 @@ let mediaScanComplete = false;
 let activeProgressByPath = new Map();
 let mediaRenderScheduled = false;
 let mediaLoadAbortController = null;
+let refreshMessageTimer = null;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 
@@ -25,12 +26,83 @@ async function logout() {
     checkAuth();
 }
 
+async function refreshLibrary() {
+    if (!await confirmLibraryRefresh()) return;
+    setRefreshState(true);
+    try { await loadMedia({ clearCache: true }); }
+    finally { setRefreshState(false); }
+}
+
+function confirmLibraryRefresh() {
+    const modal = document.getElementById('refresh-confirm-modal');
+    const cancel = document.getElementById('refresh-confirm-cancel');
+    const submit = document.getElementById('refresh-confirm-submit');
+    modal.classList.remove('hidden');
+    submit.focus();
+    return new Promise(resolve => {
+        const finish = confirmed => {
+            modal.classList.add('hidden');
+            cancel.onclick = null;
+            submit.onclick = null;
+            modal.onclick = null;
+            resolve(confirmed);
+        };
+        cancel.onclick = () => finish(false);
+        submit.onclick = () => finish(true);
+        modal.onclick = event => { if (event.target === modal) finish(false); };
+    });
+}
+
+async function refreshCurrentFolder() {
+    const folderPath = activeView !== 'my-library' && activeView !== 'all' ? selectedPath : '';
+    setRefreshState(true);
+    try { await loadMedia(folderPath ? { path: folderPath } : { clearCache: true }); }
+    finally { setRefreshState(false); }
+}
+
+function setRefreshState(loading) {
+    const libraryButton = document.getElementById('refresh-library-button');
+    const folderButton = document.getElementById('refresh-folder-button');
+    const buttons = [libraryButton, folderButton].filter(Boolean);
+    clearInterval(refreshMessageTimer);
+    refreshMessageTimer = null;
+    if (!loading) {
+        buttons.forEach(button => {
+            button.disabled = false;
+            button.innerText = button === libraryButton ? 'Refresh library' : 'Refresh';
+        });
+        return;
+    }
+
+    const messages = [
+        'Working on it...',
+        'Fetching videos...',
+        'Checking folders...',
+        'Looking for videos...',
+        'Updating previews...',
+        'Rebuilding library...',
+        'Saving cache...',
+        'Almost there...'
+    ];
+    let messageIndex = 0;
+    const update = () => {
+        buttons.forEach(button => {
+            button.disabled = true;
+            button.innerHTML = `<span class="loading-spinner" aria-hidden="true"></span> ${messages[messageIndex]}`;
+        });
+        messageIndex = (messageIndex + 1) % messages.length;
+    };
+    update();
+    refreshMessageTimer = setInterval(update, 1200);
+}
+
 async function checkAuth() {
     const session = await getAuthenticatedSession();
     currentUserId = session?.user?.id || '';
     document.getElementById('auth-section').classList.toggle('hidden', !!session);
     document.getElementById('stream-section').classList.toggle('hidden', !session);
     document.getElementById('logout-button').classList.toggle('hidden', !session);
+    document.getElementById('refresh-library-button').classList.toggle('hidden', !session);
     if (session) {
         showLibrary('my-library');
         loadMedia();
@@ -41,7 +113,8 @@ async function* listVideos(path = '', signal) {
     const headers = new Headers();
     const token = getAccessToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(`${API_BASE}/media/stream`, { headers, cache: 'no-store', signal });
+    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    const response = await fetch(`${API_BASE}/media/stream${query}`, { headers, cache: 'no-store', signal });
     if (!response.ok) {
         let detail = `Request failed (${response.status})`;
         try { detail = (await response.json()).detail || detail; } catch (_) {}
@@ -96,21 +169,33 @@ function loadCachedMedia() {
 }
 
 function saveCachedMedia(media) {
-    if (!currentUserId || !media.length) return;
+    if (!currentUserId) return;
     try { localStorage.setItem(getMediaCacheKey(), JSON.stringify(media)); }
     catch (error) { console.warn('Unable to cache media library', error); }
 }
 
-async function loadMedia() {
+function isPathWithin(filePath, folderPath) {
+    return filePath === folderPath || filePath.startsWith(`${folderPath}/`);
+}
+
+async function loadMedia(options = {}) {
+    const refreshPath = options.path || '';
+    const fullRefresh = options.clearCache || !refreshPath;
     const generation = ++mediaLoadGeneration;
     mediaLoadAbortController?.abort();
     mediaLoadAbortController = new AbortController();
     const { signal } = mediaLoadAbortController;
     const listElement = document.getElementById('media-list');
     const status = document.getElementById('media-status');
+    if (options.clearCache) {
+        try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
+    }
     allMedia = loadCachedMedia();
+    if (refreshPath) allMedia = allMedia.filter(file => !isPathWithin(file.path, refreshPath));
+    const initialRoots = new Set(mediaRoots());
+    if (refreshPath) initialRoots.add(refreshPath.split('/')[0]);
     mediaScanComplete = false;
-    renderNavigation();
+    renderNavigation(initialRoots);
     activeProgressByPath = new Map();
     listElement.innerHTML = '';
     status.innerHTML = '<span class="loading-spinner" role="status" aria-label="Loading videos"></span>';
@@ -119,20 +204,32 @@ async function loadMedia() {
         status.innerHTML = '';
     }
     let receivedFreshMedia = false;
+    const streamedRoots = new Set(mediaRoots());
+    const displayedRoots = new Set(initialRoots);
     try {
         const previewPromise = loadPreviewManifests();
         void loadContinueWatching(generation).catch(error => {
             if (generation === mediaLoadGeneration) console.warn('Unable to load Continue watching items', error);
         });
-        for await (const video of listVideos('', signal)) {
+        for await (const video of listVideos(refreshPath, signal)) {
             if (generation !== mediaLoadGeneration) return;
             if (!receivedFreshMedia) {
                 receivedFreshMedia = true;
-                allMedia = [];
+                if (fullRefresh) {
+                    allMedia = [];
+                    streamedRoots.clear();
+                }
                 listElement.innerHTML = '';
                 status.innerHTML = '';
             }
+            const root = mediaCategory(video);
+            const isNewRoot = !streamedRoots.has(root);
+            streamedRoots.add(root);
             allMedia.push(video);
+            if (isNewRoot) {
+                displayedRoots.add(root);
+                renderNavigation(displayedRoots);
+            }
             scheduleMediaRender();
 
             if (allMedia.length === 1 || allMedia.length % 50 === 0) {
@@ -140,19 +237,20 @@ async function loadMedia() {
             }
         }
         if (!receivedFreshMedia) {
-            allMedia = [];
-            try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
+            if (fullRefresh) {
+                allMedia = [];
+                try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
+            }
         }
         saveCachedMedia(allMedia);
         mediaScanComplete = true;
         renderNavigation();
-        renderMedia();
         renderContinueWatching();
         renderWatchAgain();
         if (generation !== mediaLoadGeneration) return;
         await previewPromise;
         if (generation !== mediaLoadGeneration) return;
-        renderMedia();
+        addVideoPreviews();
         status.innerText = '';
     } catch (error) {
         if (error.name === 'AbortError') return;
@@ -188,11 +286,12 @@ function mediaRoots() {
     return [...new Set(allMedia.map(mediaCategory).filter(Boolean))].sort(naturalCompare);
 }
 
-function renderNavigation() {
+function renderNavigation(rootOverride = null) {
     const tabs = document.getElementById('media-tabs');
     if (!tabs) return;
     tabs.innerHTML = '';
-    mediaRoots().forEach(root => {
+    const roots = rootOverride ? [...rootOverride].sort(naturalCompare) : mediaRoots();
+    roots.forEach(root => {
         const button = document.createElement('button');
         button.className = 'nav-button';
         button.dataset.view = root;
@@ -526,7 +625,7 @@ async function addVideoPreviews() {
             loadNextPreview();
         });
     }, { rootMargin: '120px' });
-    document.querySelectorAll('[data-preview-kind="sprite"], [data-preview-kind="image"]').forEach(preview => previewObserver.observe(preview));
+    document.querySelectorAll('[data-preview-kind="sprite"], [data-preview-kind="image"], [data-preview-kind="pending"]').forEach(preview => previewObserver.observe(preview));
 }
 
 
@@ -592,17 +691,13 @@ function renderMedia() {
         const preview = document.createElement('div');
         preview.className = 'preview';
         const artwork = file.previewImagePath;
-        if (artwork || manifest) {
-            preview.dataset.previewKind = artwork ? 'image' : 'sprite';
-            preview.dataset.previewPath = file.path;
-            if (artwork) {
-                preview.dataset.previewImagePath = artwork;
-                preview.dataset.previewImageUpdatedAt = file.previewImageUpdatedAt || '';
-            }
-            preview.setAttribute('aria-label', `Preview for ${file.name}`);
-        } else {
-            preview.setAttribute('aria-label', `Preview unavailable for ${file.name}`);
+        preview.dataset.previewKind = artwork ? 'image' : manifest ? 'sprite' : 'pending';
+        preview.dataset.previewPath = file.path;
+        if (artwork) {
+            preview.dataset.previewImagePath = artwork;
+            preview.dataset.previewImageUpdatedAt = file.previewImageUpdatedAt || '';
         }
+        preview.setAttribute('aria-label', artwork || manifest ? `Preview for ${file.name}` : `Preview unavailable for ${file.name}`);
         const copy = document.createElement('span');
         copy.className = 'media-copy';
         const name = document.createElement('span');

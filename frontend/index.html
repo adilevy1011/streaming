@@ -30,6 +30,14 @@
         .preview { width: 120px; height: 68px; flex: 0 0 120px; object-fit: cover; border-radius: 5px; background: #080808; pointer-events: none; }
         .preview.preview-loading { display: flex; align-items: center; justify-content: center; }
         .preview.preview-loading::after { content: ''; width: 18px; height: 18px; border: 2px solid #333; border-top-color: #3ecf8e; border-radius: 50%; animation: spin .8s linear infinite; }
+        button:disabled { opacity: .65; cursor: wait; }
+        .modal-backdrop { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, .72); }
+        .modal-backdrop.hidden { display: none; }
+        .modal-card { width: min(520px, 100%); padding: 24px; background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 10px; box-shadow: 0 16px 50px rgba(0, 0, 0, .55); }
+        .modal-card h2 { margin-top: 0; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+        .modal-actions button { width: auto; }
+        .modal-cancel { background: #333; color: #fff; }
         .media-copy { min-width: 0; flex: 1; }
         .library-card { min-height: 68px; }
         .folder-icon { font-size: 1.7rem; flex: 0 0 34px; }
@@ -54,7 +62,10 @@
     <div class="container">
         <header class="site-header">
             <h1>Adlv Stream</h1>
-            <button id="logout-button" class="hidden" onclick="logout()" style="width: auto; background: #ff4444; color: #fff;">Log Out</button>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="refresh-library-button" class="hidden" onclick="refreshLibrary()" style="width: auto;">Refresh library</button>
+                <button id="logout-button" class="hidden" onclick="logout()" style="width: auto; background: #ff4444; color: #fff;">Log Out</button>
+            </div>
         </header>
         <div id="auth-section">
             <h3>Sign In</h3>
@@ -84,7 +95,7 @@
             <section id="library-view">
                 <div class="view-header">
                     <h2 id="library-title">Library</h2>
-                    <button onclick="loadMedia()">Refresh</button>
+                    <button id="refresh-folder-button" onclick="refreshCurrentFolder()">Refresh</button>
                 </div>
                 <div class="toolbar">
                     <input id="search" type="search" placeholder="Search this library..." oninput="renderMedia()">
@@ -92,6 +103,16 @@
                 <p id="media-status" class="muted"></p>
                 <ul id="media-list" class="media-list"></ul>
             </section>
+        </div>
+    </div>
+    <div id="refresh-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="refresh-confirm-title">
+        <div class="modal-card">
+            <h2 id="refresh-confirm-title">Refresh entire library?</h2>
+            <p>This will refresh your entire library and might take a few minutes. If you would rather refresh a specific tab, use the local refresh button instead.</p>
+            <div class="modal-actions">
+                <button id="refresh-confirm-cancel" class="modal-cancel">Cancel</button>
+                <button id="refresh-confirm-submit">Refresh library</button>
+            </div>
         </div>
     </div>
     <script src="api.js"></script>

@@ -28,6 +28,7 @@ Supabase project
 ## Documentation
 
 - [Setup and deployment](docs/setup.md)
+- [How to use](docs/how_to_use.md)
 - [Database Architecture](docs/database_architecture.md)
 - [Scripts](docs/scripts.md)
 
@@ -50,3 +51,7 @@ frontend/
   watch.html                Video player page
   app.js, watch.js, api.js  Frontend application code
 ```
+
+## How to build your own server
+
+You can build your own media streaming server by following the instructions in the [setup documentation](docs/setup.md), and then to understand how to organize your database correctly check out the ["how to use" documentation](docs/how_to_use.md).

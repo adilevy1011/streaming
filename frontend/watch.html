@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#3ecf8e">
     <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
     <link rel="icon" type="image/png" href="app_icon.png">
     <title>Watch | Adlv Media Stream</title>
     <style>
@@ -43,6 +44,21 @@
         .completion-actions.hidden { display: none; }
         .completion-actions button { min-width: 150px; }
         .completion-message { display: none !important; }
+        @media (max-width: 600px) {
+            body { padding: 14px; }
+            .container { width: 100%; }
+            .back-button { min-height: 42px; }
+            h1#now-playing { font-size: 1.35rem; line-height: 1.25; overflow-wrap: anywhere; }
+            .video-player-shell { padding: 5px; margin-top: 10px; }
+            .timeline-shell { padding: 8px 8px 7px; }
+            .player-controls { gap: 5px; flex-wrap: wrap; }
+            .player-controls button { min-width: 34px; min-height: 34px; }
+            .player-time { min-width: 0; flex: 1; font-size: .75rem; }
+            .volume-control { width: 54px; }
+            .settings-menu { right: -4px; bottom: 36px; }
+            .completion-actions { right: 10px; bottom: 62px; left: 10px; max-width: none; padding: 8px; }
+            .completion-actions button { flex: 1 1 100%; min-width: 0; min-height: 40px; }
+        }
     </style>
 </head>
 <body>

@@ -17,9 +17,22 @@ storage.buckets: media
           | logical media_path match
           +-- video_previews
           +-- video_credits
+
+public.media_objects  <-- synchronized catalog of bucket objects
+    +-- public.videos  <-- indexed video catalog used by the application
 ```
 
 `media_path` is the canonical storage object path used by the application. It is deliberately not a PostgreSQL foreign key because Supabase Storage objects are managed in the `storage` schema and a single video can have many related preview objects. Workers reconcile database rows with storage contents when generating previews and detecting credits.
+
+The media catalog is the exception: `public.media_objects` mirrors non-generated objects in the `media` bucket, and `public.videos` contains one enriched row per video. A trigger on `storage.objects` handles uploads, deletes, renames, and metadata changes. The migration also backfills the catalog from existing Storage objects. Storage remains the source of truth for bytes; the catalog is the source of truth for library discovery.
+
+### `public.videos`
+
+The indexed application catalog. Its primary key is the Storage object path. It also stores the matching subtitle and same-name artwork paths so normal library and playback lookups do not need to list Storage.
+
+### `public.media_objects`
+
+The supporting catalog of videos, images, subtitles, and other bucket objects. It is used to maintain sibling metadata and folder artwork while excluding generated objects below `__previews/`.
 
 ## Public tables
 
@@ -108,13 +121,3 @@ Generated preview sheets are stored below `__previews/`. Authenticated preview w
 ## Migration sources
 
 The current schema is defined by the migrations in [`supabase/migrations`](../supabase/migrations/):
-
-- `20260920000000_create_video_progress.sql`
-- `20260921000000_create_video_previews.sql`
-- `20260922074552_remote_schema.sql`
-- `20260922120000_allow_authenticated_preview_generation.sql`
-- `20260922130000_create_profiles.sql`
-- `20260923160957_create_video_credits_table.sql`
-- `20260923170000_update_video_credits_model.sql`
-- `20260923180000_update_video_credits_detector.sql`
-- `20260923190000_create_profile_on_user_signup.sql`

@@ -522,12 +522,6 @@ function renderFolderButton(label, subtitle, onClick, artwork = null) {
     return li;
 }
 
-function folderArtwork(folderPath) {
-    const file = allMedia.find(item => item.folderArtworks?.[folderPath]);
-    const artwork = file?.folderArtworks?.[folderPath];
-    return artwork ? { path: artwork.path, updatedAt: artwork.updatedAt } : null;
-}
-
 function openFolder(folderPath) {
     selectedPath = folderPath;
     document.getElementById('search').value = '';
@@ -638,12 +632,29 @@ function renderMedia() {
     const browsingCategory = activeView !== 'my-library' && activeView !== 'all';
     const browsePath = browsingCategory ? selectedPath : '';
     const folderPaths = new Set();
+    const folderVideoCounts = new Map();
+    const folderArtworkByPath = new Map();
+
+    // Build these indexes once per render instead of repeatedly filtering allMedia
+    // for every folder card and every flattening decision.
+    allMedia.forEach(file => {
+        Object.entries(file.folderArtworks || {}).forEach(([folderPath, artwork]) => {
+            if (!folderArtworkByPath.has(folderPath)) folderArtworkByPath.set(folderPath, artwork);
+        });
+        const parts = file.path.split('/');
+        for (let index = 1; index < parts.length; index += 1) {
+            const folderPath = parts.slice(0, index).join('/');
+            folderVideoCounts.set(folderPath, (folderVideoCounts.get(folderPath) || 0) + 1);
+            if (browsingCategory && file.path.startsWith(`${browsePath}/`) && index >= browsePath.split('/').length + 1) {
+                folderPaths.add(folderPath);
+            }
+        }
+    });
     if (browsingCategory) {
-        const prefix = `${browsePath}/`;
-        allMedia.forEach(file => {
-            if (!file.path.startsWith(prefix)) return;
-            const remainder = file.path.slice(prefix.length).split('/');
-            if (remainder.length > 1) folderPaths.add(`${browsePath}/${remainder[0]}`);
+        // The index above includes descendants; retain only immediate children.
+        const depth = browsePath.split('/').filter(Boolean).length + 1;
+        [...folderPaths].forEach(folderPath => {
+            if (folderPath.split('/').filter(Boolean).length !== depth) folderPaths.delete(folderPath);
         });
     }
 
@@ -652,9 +663,7 @@ function renderMedia() {
         listElement.appendChild(renderFolderButton('\u2190 Back', 'Back', () => openFolder(parentPath)));
     }
 
-    const flattenedFolderPaths = new Set([...folderPaths].filter(folderPath =>
-        allMedia.filter(file => file.path.startsWith(`${folderPath}/`)).length === 1
-    ));
+    const flattenedFolderPaths = new Set([...folderPaths].filter(folderPath => folderVideoCounts.get(folderPath) === 1));
     const flattenedVideoPaths = new Set();
     flattenedFolderPaths.forEach(folderPath => {
         allMedia.forEach(file => {
@@ -667,12 +676,11 @@ function renderMedia() {
         .filter(folderPath => mediaCategoryLabel(folderPath).toLowerCase().includes(query))
         .sort(naturalCompare)
         .forEach(folderPath => {
-            const count = allMedia.filter(file => file.path.startsWith(`${folderPath}/`)).length;
             listElement.appendChild(renderFolderButton(
                 mediaCategoryLabel(folderPath),
-                `${count} video${count === 1 ? '' : 's'}`,
+                `${folderVideoCounts.get(folderPath) || 0} video${folderVideoCounts.get(folderPath) === 1 ? '' : 's'}`,
                 () => openFolder(folderPath),
-                folderArtwork(folderPath)
+                folderArtworkByPath.get(folderPath) || null
             ));
         });
 

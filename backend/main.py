@@ -1,6 +1,5 @@
 import os
 import json
-from collections import deque
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
@@ -192,94 +191,95 @@ def update_profile(payload: ProfileRequest, user: Any = Depends(current_user), t
     return data[0] if data else row
 
 
-def is_video(name: str, metadata: dict[str, Any] | None = None) -> bool:
-    extensions = {"mp4", "m4v", "webm", "mov", "mkv", "avi", "ogv", "mpeg", "mpg", "ts"}
-    return bool((metadata or {}).get("mimetype", "").startswith("video/")) or name.rsplit(".", 1)[-1].lower() in extensions
-
-
-def is_image(name: str, metadata: dict[str, Any] | None = None) -> bool:
-    extensions = {"jpg", "jpeg", "png", "webp", "gif", "avif"}
-    return bool((metadata or {}).get("mimetype", "").startswith("image/")) or name.rsplit(".", 1)[-1].lower() in extensions
-
-
-def storage_list(path: str, token: str, limit: int, offset: int) -> list[dict[str, Any]]:
-    return supabase_request(
-        "POST",
-        f"/storage/v1/object/list/{MEDIA_BUCKET}",
-        token,
-        json={"prefix": path, "limit": limit, "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
-    ) or []
-
-
-def iter_videos(token: str, path: str = "") -> Any:
+def catalog_rows(token: str, table: str, select: str, filters: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
     page_size = 1000
-    pending = deque([(path, {})])
-    while pending:
-        current_path, folder_artworks = pending.popleft()
-        directory_items = []
-        offset = 0
-        while True:
-            items = storage_list(current_path, token, page_size, offset)
-            directory_items.extend(items or [])
-            if len(items or []) < page_size:
-                break
-            offset += page_size
+    while True:
+        params = {
+            "select": select,
+            "order": "path.asc",
+            "limit": page_size,
+            "offset": offset,
+        }
+        params.update(filters or {})
+        page = supabase_request(
+            "GET",
+            f"/rest/v1/{table}",
+            token,
+            params=params,
+        ) or []
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
 
-        image_paths = {}
-        for item in directory_items:
-            name = item.get("name", "")
-            if item.get("id") is not None and is_image(name, item.get("metadata")):
-                image_paths[name.rsplit(".", 1)[0].casefold()] = {
-                    "path": f"{current_path}/{name}" if current_path else name,
-                    "updatedAt": item.get("updated_at") or item.get("created_at") or "",
-                }
 
-        for item in directory_items:
-            name = item.get("name", "")
-            if name == ".emptyFolderPlaceholder":
-                continue
-            item_path = f"{current_path}/{name}" if current_path else name
-            if item.get("id") is None:
-                child_folder_artworks = dict(folder_artworks)
-                image = image_paths.get(name.casefold())
-                if image:
-                    child_folder_artworks[item_path] = image
-                pending.append((item_path, child_folder_artworks))
-            elif is_video(name, item.get("metadata")):
-                video = {"name": name, "path": item_path, "uploadedAt": item.get("created_at") or item.get("updated_at")}
-                image = image_paths.get(name.rsplit(".", 1)[0].casefold())
-                if image:
-                    video["previewImagePath"] = image["path"]
-                    video["previewImageUpdatedAt"] = image["updatedAt"]
-                if folder_artworks:
-                    video["folderArtworks"] = folder_artworks
-                yield video
+def catalog_folder_artworks(video_path: str, image_rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    parts = video_path.split("/")
+    artworks: dict[str, dict[str, str]] = {}
+    by_stem = {
+        (row.get("folder_path", ""), row.get("name", "").rsplit(".", 1)[0].casefold()): row
+        for row in image_rows
+    }
+    for index in range(1, len(parts) - 1):
+        folder_path = "/".join(parts[:index])
+        parent_path = "/".join(parts[:index - 1])
+        folder_name = parts[index - 1]
+        image = by_stem.get((parent_path, folder_name.casefold()))
+        if image:
+            artworks[folder_path] = {
+                "path": image["path"],
+                "updatedAt": image.get("updated_at") or "",
+            }
+    return artworks
+
+
+def catalog_videos(token: str, path: str = "") -> list[dict[str, Any]]:
+    rows = catalog_rows(
+        token,
+        "videos",
+        "path,name,folder_path,created_at,updated_at,subtitle_path,preview_image_path,preview_image_updated_at",
+    )
+    image_rows = catalog_rows(
+        token,
+        "media_objects",
+        "path,name,folder_path,updated_at",
+        {"kind": "eq.image"},
+    )
+    prefix = f"{path.rstrip('/')}/" if path else ""
+    videos = []
+    for row in rows:
+        video_path = row.get("path", "")
+        if prefix and not video_path.startswith(prefix):
+            continue
+        video = {
+            "name": row.get("name", ""),
+            "path": video_path,
+            "uploadedAt": row.get("created_at") or row.get("updated_at") or "",
+        }
+        if row.get("preview_image_path"):
+            video["previewImagePath"] = row["preview_image_path"]
+            video["previewImageUpdatedAt"] = row.get("preview_image_updated_at") or ""
+        folder_artworks = catalog_folder_artworks(video_path, image_rows)
+        if folder_artworks:
+            video["folderArtworks"] = folder_artworks
+        videos.append(video)
+    return videos
 
 
 def stream_videos(token: str, path: str = ""):
-    for video in iter_videos(token, path):
+    for video in catalog_videos(token, path):
         yield json.dumps(video, separators=(",", ":")) + "\n"
 
 
 def list_files(token: str, path: str = "") -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    offset = 0
-    page_size = 1000
-    while True:
-        items = storage_list(path, token, page_size, offset)
-        for item in items or []:
-            name = item.get("name", "")
-            if name == ".emptyFolderPlaceholder":
-                continue
-            item_path = f"{path}/{name}" if path else name
-            if item.get("id") is None:
-                results.extend(list_files(token, item_path))
-            else:
-                results.append({"name": name, "path": item_path})
-        if len(items or []) < page_size:
-            break
-        offset += page_size
-    return results
+    prefix = f"{path.rstrip('/')}/" if path else ""
+    return [
+        {"name": row.get("name", ""), "path": row.get("path", "")}
+        for row in catalog_rows(token, "videos", "path,name")
+        if not prefix or row.get("path", "").startswith(prefix)
+    ]
 
 
 def matching_subtitle(token: str, video_path: str) -> str:
@@ -287,26 +287,13 @@ def matching_subtitle(token: str, video_path: str) -> str:
     if not safe_path or safe_path.startswith(".."):
         raise HTTPException(status_code=400, detail="Invalid media path.")
 
-    video_name = PurePosixPath(safe_path).name
-    video_stem = video_name.rsplit(".", 1)[0].lower()
-    directory = str(PurePosixPath(safe_path).parent)
-    if directory == ".":
-        directory = ""
-
-    # Only inspect the video's own directory instead of recursively listing the
-    # whole bucket. This keeps subtitle discovery fast for large libraries.
-    offset = 0
-    page_size = 1000
-    while True:
-        items = storage_list(directory, token, page_size, offset)
-        for item in items:
-            name = item.get("name", "")
-            if item.get("id") is not None and name.lower() == f"{video_stem}.srt":
-                return f"{directory}/{name}" if directory else name
-        if len(items) < page_size:
-            break
-        offset += page_size
-    return ""
+    rows = supabase_request(
+        "GET",
+        "/rest/v1/videos",
+        token,
+        params={"select": "subtitle_path", "path": f"eq.{safe_path}", "limit": "1"},
+    ) or []
+    return rows[0].get("subtitle_path", "") if rows else ""
 
 
 @app.get("/api/media/stream")

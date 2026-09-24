@@ -21,8 +21,6 @@ const completionActions = document.getElementById('completion-actions');
 const libraryButton = document.getElementById('library-button');
 const creditsButton = document.getElementById('credits-button');
 
-videoFrame.append(completionMessage, completionActions);
-
 let currentUserId = '';
 let progressSaveTimer;
 let progressHydrated = false;
@@ -68,10 +66,14 @@ function showPlayerControls() {
 }
 
 function isPlayerFullscreen() {
-    return document.fullscreenElement === videoFrame || document.webkitFullscreenElement === videoFrame;
+    return document.fullscreenElement === videoFrame
+        || document.webkitFullscreenElement === videoFrame
+        || videoFrame.matches(':fullscreen')
+        || videoFrame.matches(':-webkit-full-screen');
 }
 
 function handleFullscreenChange() {
+    videoFrame.classList.toggle('fullscreen-active', isPlayerFullscreen());
     showPlayerControls();
     if (isPlayerFullscreen()) {
         if (captionsToggle.checked) {
@@ -554,7 +556,7 @@ function handlePointerMove() {
 videoFrame.addEventListener('pointermove', handlePointerMove);
 videoFrame.addEventListener('mousemove', handlePointerMove);
 videoFrame.addEventListener('pointerleave', () => {
-    if (isPlayerFullscreen()) return;
+    if (isPlayerFullscreen() || videoFrame.classList.contains('fullscreen-active')) return;
     if (!player.paused && !isScrubbing && !settingsMenu.classList.contains('open')) {
         timelineShell.classList.remove('controls-visible');
         videoFrame.classList.add('user-idle');

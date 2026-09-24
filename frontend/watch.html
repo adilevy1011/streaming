@@ -18,9 +18,9 @@
         video { display: block; width: 100%; max-height: 78vh; background: #000; }
         
         .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
-        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
         
-        .timeline-shell { position: absolute; inset: auto 0 0; z-index: 10; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0, 0, 0, .9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+        .timeline-shell { position: absolute; inset: auto 0 0; z-index: 10; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0, 0, 0, .9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; will-change: opacity; transform: translateZ(0); }
         .timeline-shell.controls-visible, .video-frame.paused .timeline-shell { opacity: 1; pointer-events: auto; }
         .timeline-shell > input { display: block; width: 100%; margin: 0 0 7px; accent-color: #3ecf8e; cursor: pointer; }
         .timeline-preview { position: absolute; bottom: 94px; left: 0; display: none; width: 160px; height: 90px; transform: translateX(-50%); background-color: #080808; background-repeat: no-repeat; border: 2px solid #fff; border-radius: 5px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); pointer-events: none; }
@@ -71,12 +71,12 @@
                         <button id="fullscreen-toggle" type="button" aria-label="Fullscreen" title="Fullscreen">⛶</button>
                     </div>
                 </div>
+                <p id="completion-message" class="completion-message hidden">This video is over.</p>
+                <div id="completion-actions" class="completion-actions hidden">
+                    <button id="credits-button" type="button">Watch credits</button>
+                    <button id="library-button" class="back-button" type="button">← Back to library</button>
+                </div>
             </div>
-        </div>
-        <p id="completion-message" class="completion-message hidden">This video is over.</p>
-        <div id="completion-actions" class="completion-actions hidden">
-            <button id="credits-button" type="button">Watch credits</button>
-            <button id="library-button" class="back-button" type="button">← Back to library</button>
         </div>
     </div>
     <script src="api.js"></script>

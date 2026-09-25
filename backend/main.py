@@ -37,7 +37,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Range"],
     expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type"],
 )
@@ -367,6 +367,21 @@ def save_progress(payload: ProgressRequest, user: Any = Depends(current_user), t
         json=row,
     )
     return (data or [row])[0]
+
+
+@app.delete("/api/progress")
+def delete_progress(
+    media_path: str = Query(..., min_length=1),
+    user: Any = Depends(current_user),
+    token: str = Depends(current_token),
+) -> Response:
+    supabase_request(
+        "DELETE",
+        "/rest/v1/video_progress",
+        token,
+        params={"user_id": f"eq.{user.id}", "media_path": f"eq.{media_path}"},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def upstream_stream(url: str, headers: dict[str, str]) -> AsyncIterator[bytes]:

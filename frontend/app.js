@@ -335,6 +335,14 @@ function setLocalProgress(progress) {
     } catch (error) { console.warn('Unable to cache local playback progress', error); }
 }
 
+function removeLocalProgress(path) {
+    try {
+        const allProgress = getLocalProgress();
+        delete allProgress[getProgressKey(currentUserId, path)];
+        localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(allProgress));
+    } catch (error) { console.warn('Unable to remove cached playback progress', error); }
+}
+
 function getProgressKey(userId, path) { return `${userId}:${path}`; }
 
 function progressTimestamp(progress) {
@@ -367,9 +375,35 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
         const item = document.createElement('li');
         item.className = 'continue-item';
         item.tabIndex = 0;
+        const itemHeader = document.createElement('div');
+        itemHeader.className = 'continue-item-header';
         const name = document.createElement('span');
         name.className = 'continue-name';
         name.innerText = file.name.replace(/\.[^.]+$/, '');
+        const menuButton = document.createElement('button');
+        menuButton.className = 'continue-menu-button';
+        menuButton.type = 'button';
+        menuButton.innerText = '...';
+        menuButton.setAttribute('aria-label', `Options for ${name.innerText}`);
+        menuButton.title = 'Options';
+        const menu = document.createElement('div');
+        menu.className = 'continue-menu hidden';
+        const addMenuAction = (label, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.innerText = label;
+            button.onclick = event => { event.stopPropagation(); menu.classList.add('hidden'); action(); };
+            menu.appendChild(button);
+        };
+        addMenuAction('Restart', () => restartProgress(path, progress));
+        addMenuAction('Continue', () => playMedia(path));
+        addMenuAction('Remove from your list', () => removeProgress(path));
+        menuButton.onclick = event => {
+            event.stopPropagation();
+            document.querySelectorAll('.continue-menu').forEach(other => { if (other !== menu) other.classList.add('hidden'); });
+            menu.classList.toggle('hidden');
+        };
+        itemHeader.append(name, menuButton);
         const detail = document.createElement('small');
         detail.className = 'muted';
         detail.innerText = Number.isFinite(duration) && duration > 0
@@ -382,7 +416,7 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
         fill.style.width = Number.isFinite(duration) && duration > 0
             ? `${Math.min(100, Math.max(0, position / duration * 100))}%` : '8%';
         track.appendChild(fill);
-        item.append(name, detail, track);
+        item.append(itemHeader, menu, detail, track);
         item.onclick = () => playMedia(path, path);
         item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(path, path); };
         list.appendChild(item);
@@ -406,18 +440,65 @@ function renderWatchAgain(progressByPath = activeProgressByPath) {
         const item = document.createElement('li');
         item.className = 'continue-item';
         item.tabIndex = 0;
+        const itemHeader = document.createElement('div');
+        itemHeader.className = 'continue-item-header';
         const name = document.createElement('span');
         name.className = 'continue-name';
         name.innerText = file.name.replace(/\.[^.]+$/, '');
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-progress-button';
+        removeButton.type = 'button';
+        removeButton.innerText = ' - ';
+        removeButton.setAttribute('aria-label', `Remove ${name.innerText} from watch again`);
+        removeButton.title = 'Remove from watch again';
+        removeButton.onclick = event => { event.stopPropagation(); removeProgress(path); };
+        itemHeader.append(name, removeButton);
         const detail = document.createElement('small');
         detail.className = 'muted';
         detail.innerText = 'Completed';
-        item.append(name, detail);
+        item.append(itemHeader, detail);
         item.onclick = () => playMedia(path);
         item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(path); };
         list.appendChild(item);
     });
     section.classList.toggle('hidden', activeView !== 'my-library' || items.length === 0);
+}
+
+async function removeProgress(path) {
+    try {
+        await apiRequest(`/progress?media_path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+        activeProgressByPath.delete(path);
+        removeLocalProgress(path);
+        renderContinueWatching();
+        renderWatchAgain();
+    } catch (error) {
+        console.warn('Unable to remove playback progress', error);
+    }
+}
+
+async function restartProgress(path, progress) {
+    const reset = {
+        ...progress,
+        path,
+        media_path: path,
+        position_seconds: 0,
+        completed: false,
+        updated_at: new Date().toISOString()
+    };
+    try {
+        await apiRequest('/progress', { method: 'POST', body: JSON.stringify({
+            media_path: path,
+            position_seconds: 0,
+            duration_seconds: Number.isFinite(Number(progress.duration_seconds)) ? Number(progress.duration_seconds) : null,
+            completed: false,
+            updated_at: reset.updated_at
+        }) });
+        activeProgressByPath.set(path, reset);
+        setLocalProgress({ ...reset, key: getProgressKey(currentUserId, path) });
+        playMedia(path);
+    } catch (error) {
+        console.warn('Unable to restart playback', error);
+    }
 }
 
 async function loadContinueWatching(generation) {

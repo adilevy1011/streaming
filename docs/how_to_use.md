@@ -2,6 +2,8 @@
 
 After the server is set up, organize the files in the media bucket and the library will build its navigation automatically.
 
+> **Free-tier storage limit:** This setup does not require a Supabase Pro subscription, but free projects limit individual files to **50 MB**. If you use a free-tier project, you will not be able to host large video files.
+
 ## Organizing folders
 
 Every first-level bucket folder that contains video files becomes a tab in the frontend. Folder names are used as the tab names, with the first letter capitalized. The names do not need to be `movies` or `shows`.
@@ -89,7 +91,7 @@ Administrators can change this setting from the Admin Actions panel by selecting
 
 To manage permissions in the application, sign in as an administrator and click **Admin Actions** next to **Refresh library**. The panel shows every Auth user and every cataloged video. Select a user to see their effective access, then check or uncheck videos and hit save.
 
-When an unrestricted video is deselected for one user, the application converts it into an allowlist containing the other non-admin users. This preserves the unrestricted-by-default behavior while allowing that user to be removed from the video.
+When an unrestricted video is deselected for one user, the application converts it into an allowlist containing the other users. This preserves the unrestricted-by-default behavior while allowing that user to be removed from the video.
 
 ### Security model
 
@@ -103,5 +105,3 @@ No `SERVICE_ROLE` key is required for this implementation. Administrator promoti
 
 
 
-### Disclaimer
-- This setup technically does not require a pro subscription to supabase, but Supabase does have a limit of 50mg per file on free projects. So if you build this server using a free tier project you will not be able to host large video files.

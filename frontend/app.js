@@ -543,6 +543,7 @@ async function loadMedia(options = {}) {
         try { localStorage.removeItem(getMediaCacheKey()); } catch (_) {}
     }
     allMedia = loadCachedMedia();
+    renderRecentlyAdded();
     if (refreshPath) allMedia = allMedia.filter(file => !isPathWithin(file.path, refreshPath));
     const initialRoots = new Set(mediaRoots());
     if (refreshPath) initialRoots.add(refreshPath.split('/')[0]);
@@ -598,6 +599,7 @@ async function loadMedia(options = {}) {
         mediaScanComplete = true;
         renderNavigation();
         renderContinueWatching();
+        renderRecentlyAdded();
         renderWatchAgain();
         if (generation !== mediaLoadGeneration) return;
         await previewPromise;
@@ -664,12 +666,14 @@ function showLibrary(view) {
     renderNavigation();
     if (isMyLibrary) {
         renderContinueWatching();
+        renderRecentlyAdded();
         renderWatchAgain();
         return;
     }
     document.getElementById('library-title').innerText = view === 'all' ? 'All Videos' : mediaCategoryLabel(view);
     document.getElementById('search').placeholder = `Search ${view === 'all' ? 'videos' : mediaCategoryLabel(view)}...`;
     renderContinueWatching();
+    renderRecentlyAdded();
     renderWatchAgain();
     renderMedia();
 }
@@ -702,6 +706,23 @@ function progressTimestamp(progress) {
     return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function createVideoPreview(file) {
+    const preview = document.createElement('div');
+    preview.className = 'preview';
+    const manifest = previewManifests.get(file.path);
+    const artwork = file.previewImagePath;
+    preview.dataset.previewKind = artwork ? 'image' : manifest ? 'sprite' : 'pending';
+    preview.dataset.previewPath = file.path;
+    if (artwork) {
+        preview.dataset.previewImagePath = artwork;
+        preview.dataset.previewImageUpdatedAt = file.previewImageUpdatedAt || '';
+    }
+    preview.setAttribute('aria-label', artwork || manifest
+        ? `Preview for ${file.name || file.path}`
+        : `Preview unavailable for ${file.name || file.path}`);
+    return preview;
+}
+
 function renderContinueWatching(progressByPath = activeProgressByPath) {
     const section = document.getElementById('continue-section');
     const list = document.getElementById('continue-list');
@@ -721,11 +742,11 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
 
     items.forEach(progress => {
         const path = progress.path || progress.media_path;
-        const file = mediaByPath.get(path) || { name: path.split('/').pop() || path };
+        const file = mediaByPath.get(path) || { path, name: path.split('/').pop() || path };
         const position = Number(progress.position_seconds);
         const duration = Number(progress.duration_seconds);
         const item = document.createElement('li');
-        item.className = 'continue-item';
+        item.className = 'continue-item media-preview-card';
         item.tabIndex = 0;
         const itemHeader = document.createElement('div');
         itemHeader.className = 'continue-item-header';
@@ -768,7 +789,10 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
         fill.style.width = Number.isFinite(duration) && duration > 0
             ? `${Math.min(100, Math.max(0, position / duration * 100))}%` : '8%';
         track.appendChild(fill);
-        item.append(itemHeader, menu, detail, track);
+        const content = document.createElement('div');
+        content.className = 'preview-card-content';
+        content.append(itemHeader, menu, detail, track);
+        item.append(createVideoPreview(file), content);
         item.onclick = () => playMedia(path, path);
         item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(path, path); };
         list.appendChild(item);
@@ -788,9 +812,9 @@ function renderWatchAgain(progressByPath = activeProgressByPath) {
 
     items.forEach(progress => {
         const path = progress.path || progress.media_path;
-        const file = mediaByPath.get(path) || { name: path.split('/').pop() || path };
+        const file = mediaByPath.get(path) || { path, name: path.split('/').pop() || path };
         const item = document.createElement('li');
-        item.className = 'continue-item';
+        item.className = 'continue-item media-preview-card';
         item.tabIndex = 0;
         const itemHeader = document.createElement('div');
         itemHeader.className = 'continue-item-header';
@@ -808,9 +832,49 @@ function renderWatchAgain(progressByPath = activeProgressByPath) {
         const detail = document.createElement('small');
         detail.className = 'muted';
         detail.innerText = 'Completed';
-        item.append(itemHeader, detail);
+        const content = document.createElement('div');
+        content.className = 'preview-card-content';
+        content.append(itemHeader, detail);
+        item.append(createVideoPreview(file), content);
         item.onclick = () => playMedia(path);
         item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(path); };
+        list.appendChild(item);
+    });
+    section.classList.toggle('hidden', activeView !== 'my-library' || items.length === 0);
+    addVideoPreviews();
+}
+
+function renderRecentlyAdded() {
+    const section = document.getElementById('recently-added-section');
+    const list = document.getElementById('recently-added-list');
+    list.innerHTML = '';
+    const items = allMedia
+        .filter(file => file?.path)
+        .slice()
+        .sort((left, right) => new Date(right.uploadedAt || 0) - new Date(left.uploadedAt || 0))
+        .slice(0, 3);
+
+    items.forEach(file => {
+        const item = document.createElement('li');
+        item.className = 'continue-item media-preview-card';
+        item.tabIndex = 0;
+        const name = document.createElement('span');
+        name.className = 'continue-name';
+        name.innerText = (file.name || file.path.split('/').pop() || file.path).replace(/\.[^.]+$/, '');
+        const detail = document.createElement('small');
+        detail.className = 'muted';
+        const addedAt = new Date(file.uploadedAt || 0);
+        detail.innerText = Number.isNaN(addedAt.getTime()) || !file.uploadedAt
+            ? 'Recently added'
+            : `Added ${addedAt.toLocaleDateString()}`;
+        const content = document.createElement('div');
+        content.className = 'preview-card-content';
+        content.append(name, detail);
+        item.append(createVideoPreview(file), content);
+        item.onclick = () => playMedia(file.path);
+        item.onkeydown = event => {
+            if (event.key === 'Enter' || event.key === ' ') playMedia(file.path);
+        };
         list.appendChild(item);
     });
     section.classList.toggle('hidden', activeView !== 'my-library' || items.length === 0);
@@ -990,10 +1054,26 @@ function mediaFileUrl(path, cache = '', version = '') {
 
 function loadSpritePreview(preview, manifest) {
     const spritePath = manifest?.sheets?.[0];
-    if (!manifest || !spritePath) return;
-    preview.classList.remove('preview-loading');
-    setSpriteFrame(preview, manifest, mediaFileUrl(spritePath));
-    preview.dataset.previewLoaded = 'true';
+    if (!manifest || !spritePath) return Promise.resolve();
+    const spriteUrl = mediaFileUrl(spritePath, 'preview', manifest.updated_at || '');
+    const image = new Image();
+    preview.classList.add('preview-loading');
+    return new Promise(resolve => {
+        image.onload = () => {
+            if (document.contains(preview)) {
+                preview.classList.remove('preview-loading');
+                setSpriteFrame(preview, manifest, spriteUrl);
+                preview.dataset.previewLoaded = 'true';
+            }
+            resolve();
+        };
+        image.onerror = () => {
+            preview.classList.remove('preview-loading');
+            preview.dataset.previewError = 'true';
+            resolve();
+        };
+        image.src = spriteUrl;
+    });
 }
 
 async function addVideoPreviews() {
@@ -1014,30 +1094,35 @@ async function addVideoPreviews() {
             if (imagePath) {
                 const image = new Image();
                 const imageVersion = preview.dataset.previewImageUpdatedAt;
-                image.onload = () => {
-                    if (generation !== previewGeneration || !document.contains(preview)) return;
-                    preview.classList.remove('preview-loading');
-                    preview.style.backgroundImage = `url("${mediaFileUrl(imagePath, 'preview', imageVersion)}")`;
-                    preview.style.backgroundSize = 'contain';
-                    preview.style.backgroundRepeat = 'no-repeat';
-                    preview.style.backgroundPosition = 'center';
-                    preview.dataset.previewLoaded = 'true';
-                };
-                image.onerror = () => {
-                    preview.classList.remove('preview-loading');
-                    if (preview.dataset.previewFallback === 'folder') {
-                        preview.className = 'folder-icon';
-                        preview.innerText = '\u{1F4C1}';
-                    }
-                };
-                image.src = mediaFileUrl(imagePath, 'preview', imageVersion);
-                if (manifest?.sheets?.[0]) {
-                    loadSpritePreview(preview, manifest);
-                } else {
-                    preview.classList.add('preview-loading');
-                }
+                preview.classList.add('preview-loading');
+                await new Promise(resolve => {
+                    image.onload = () => {
+                        if (generation === previewGeneration && document.contains(preview)) {
+                            preview.classList.remove('preview-loading');
+                            preview.style.backgroundImage = `url("${mediaFileUrl(imagePath, 'preview', imageVersion)}")`;
+                            preview.style.backgroundSize = 'contain';
+                            preview.style.backgroundRepeat = 'no-repeat';
+                            preview.style.backgroundPosition = 'center';
+                            preview.dataset.previewLoaded = 'true';
+                        }
+                        resolve();
+                    };
+                    image.onerror = () => {
+                        if (manifest?.sheets?.[0]) {
+                            loadSpritePreview(preview, manifest).then(resolve);
+                        } else {
+                            preview.classList.remove('preview-loading');
+                            if (preview.dataset.previewFallback === 'folder') {
+                                preview.className = 'folder-icon';
+                                preview.innerText = '\u{1F4C1}';
+                            }
+                            resolve();
+                        }
+                    };
+                    image.src = mediaFileUrl(imagePath, 'preview', imageVersion);
+                });
             } else {
-                loadSpritePreview(preview, manifest);
+                await loadSpritePreview(preview, manifest);
             }
         } finally {
             activeLoads -= 1;
@@ -1051,13 +1136,17 @@ async function addVideoPreviews() {
             if (!entry.isIntersecting) return;
             const preview = entry.target;
             previewObserver.unobserve(preview);
-            if (preview.dataset.previewQueued || preview.dataset.previewLoaded) return;
+            if (preview.dataset.previewLoaded) return;
             preview.dataset.previewQueued = 'true';
             queue.push(preview);
             loadNextPreview();
         });
     }, { rootMargin: '120px' });
-    document.querySelectorAll('[data-preview-kind="sprite"], [data-preview-kind="image"], [data-preview-kind="pending"]').forEach(preview => previewObserver.observe(preview));
+    document.querySelectorAll('[data-preview-kind="sprite"], [data-preview-kind="image"], [data-preview-kind="pending"]').forEach(preview => {
+        if (preview.dataset.previewLoaded) return;
+        delete preview.dataset.previewQueued;
+        previewObserver.observe(preview);
+    });
 }
 
 

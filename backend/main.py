@@ -422,7 +422,7 @@ def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(current
 
 @app.get("/api/previews")
 def previews(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
-    select = "media_path,sheets,duration_seconds,interval_seconds,columns,rows,thumbnail_width,thumbnail_height"
+    select = "media_path,sheets,duration_seconds,interval_seconds,columns,rows,thumbnail_width,thumbnail_height,updated_at"
     visible = {
         row["path"] for row in supabase_request(
             "GET", "/rest/v1/videos", token, params={"select": "path"}

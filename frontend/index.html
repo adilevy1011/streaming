@@ -108,6 +108,11 @@
         .continue-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; list-style: none; padding: 0; margin: 0; }
         .continue-item { position: relative; padding: 14px; background: #1e1e1e; border: 1px solid #292929; border-radius: 8px; cursor: pointer; }
         .continue-item:hover, .continue-item:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
+        .media-preview-card { min-height: 170px; padding: 0; overflow: hidden; }
+        .media-preview-card > .preview { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
+        .preview-card-content { position: absolute; z-index: 1; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 9px 10px; background: rgba(0, 0, 0, .78); border-radius: 7px; }
+        .preview-card-content .continue-name { max-width: 100%; }
+        .preview-card-content .progress-track { width: 220px; max-width: 100%; }
         .continue-item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
         .continue-name { display: block; overflow-wrap: anywhere; line-height: 1.35; }
         .continue-menu-button, .remove-progress-button { flex: 0 0 auto; margin: -8px -8px 0 0; padding: 2px 8px; background: transparent; color: #ddd; font-size: 1.3rem; line-height: 1; }
@@ -173,6 +178,11 @@
             <section id="continue-section" class="continue-section hidden" aria-labelledby="continue-title">
                 <h2 id="continue-title">Continue watching</h2>
                 <ul id="continue-list" class="continue-list"></ul>
+            </section>
+
+            <section id="recently-added-section" class="continue-section hidden" aria-labelledby="recently-added-title">
+                <h2 id="recently-added-title">Recently Added</h2>
+                <ul id="recently-added-list" class="continue-list"></ul>
             </section>
 
             <section id="watch-again-section" class="continue-section hidden" aria-labelledby="watch-again-title">

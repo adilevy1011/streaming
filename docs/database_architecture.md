@@ -24,7 +24,7 @@ public.media_objects  <-- synchronized catalog of bucket objects
 
 `media_path` is the canonical storage object path used by the application. It is deliberately not a PostgreSQL foreign key because Supabase Storage objects are managed in the `storage` schema and a single video can have many related preview objects. Workers reconcile database rows with storage contents when generating previews and detecting credits.
 
-The media catalog is the exception: `public.media_objects` mirrors non-generated objects in the `media` bucket, and `public.videos` contains one enriched row per video. A trigger on `storage.objects` handles uploads, deletes, renames, and metadata changes. The migration also backfills the catalog from existing Storage objects. Storage remains the source of truth for bytes; the catalog is the source of truth for library discovery.
+The media catalog is the exception: `public.media_objects` mirrors non-generated objects in the `media` bucket, and `public.videos` contains one enriched row per video. Triggers on `storage.objects` handle uploads, deletes, renames, and metadata changes. When a source video is deleted, a cleanup trigger also removes its rows from `videos`, `media_objects`, `video_progress`, `video_previews`, and `video_credits`. The migration also backfills the catalog from existing Storage objects. Storage remains the source of truth for bytes; the catalog is the source of truth for library discovery.
 
 ### `public.videos`
 

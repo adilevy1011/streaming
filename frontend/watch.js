@@ -96,6 +96,14 @@ function setLocalProgress(progress) {
     } catch (error) { console.warn('Unable to cache local playback progress', error); }
 }
 
+function removeLocalProgress(mediaPath) {
+    try {
+        const allProgress = getLocalProgress();
+        delete allProgress[getProgressKey(mediaPath)];
+        localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(allProgress));
+    } catch (error) { console.warn('Unable to remove cached playback progress', error); }
+}
+
 function getProgressKey(mediaPath) { return `${currentUserId}:${mediaPath}`; }
 
 function progressTimestamp(progress) {
@@ -150,13 +158,19 @@ async function loadProgress() {
         path,
         updated_at: data.updated_at || ''
     } : null;
-    const localIsNewer = local && (!remote || progressTimestamp(local) > progressTimestamp(remote));
+    // A successful request with no row means the progress was removed from
+    // the database. Do not resurrect it from localStorage.
+    if (!remote) {
+        if (local) removeLocalProgress(path);
+        return null;
+    }
+    const localIsNewer = local && progressTimestamp(local) > progressTimestamp(remote);
     if (localIsNewer) {
         await saveProgress(Number(local.position_seconds), Number(local.duration_seconds), !!local.completed);
         return local;
     }
     if (remote) setLocalProgress(remote);
-    return remote || local;
+    return remote;
 }
 
 function formatTime(seconds) {

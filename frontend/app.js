@@ -11,6 +11,19 @@ let activeProgressByPath = new Map();
 let mediaRenderScheduled = false;
 let mediaLoadAbortController = null;
 let refreshMessageTimer = null;
+let adminAccess = false;
+let adminUsers = [];
+let adminVideos = [];
+let selectedAdminUser = null;
+let adminUserSearch = '';
+let adminVideoSearch = '';
+let adminDraftAccess = new Map();
+let adminOriginalAccess = new Map();
+let adminChangesPending = false;
+let adminDraftNewVideosAccess = true;
+let adminOriginalNewVideosAccess = true;
+const adminCollapsedFolders = new Set();
+let adminFolderStateInitialized = false;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 
@@ -99,13 +112,352 @@ function setRefreshState(loading) {
 async function checkAuth() {
     const session = await getAuthenticatedSession();
     currentUserId = session?.user?.id || '';
+    adminAccess = false;
+    if (session) {
+        try { adminAccess = !!(await apiRequest('/profile')).admin_access; }
+        catch (error) { console.warn('Unable to load profile access', error); }
+    }
     document.getElementById('auth-section').classList.toggle('hidden', !!session);
     document.getElementById('stream-section').classList.toggle('hidden', !session);
     document.getElementById('logout-button').classList.toggle('hidden', !session);
     document.getElementById('refresh-library-button').classList.toggle('hidden', !session);
+    document.getElementById('admin-actions-button').classList.toggle('hidden', !session || !adminAccess);
     if (session) {
         showLibrary('my-library');
         loadMedia();
+    }
+}
+
+async function showAdminActions() {
+    if (!adminAccess) return;
+    const modal = document.getElementById('admin-modal');
+    const status = document.getElementById('admin-status');
+    const users = document.getElementById('admin-users');
+    const videos = document.getElementById('admin-videos');
+    modal.classList.remove('hidden');
+    users.innerHTML = '';
+    videos.innerHTML = '';
+    selectedAdminUser = null;
+    adminDraftAccess = new Map();
+    adminOriginalAccess = new Map();
+    adminChangesPending = false;
+    adminDraftNewVideosAccess = true;
+    adminOriginalNewVideosAccess = true;
+    adminCollapsedFolders.clear();
+    adminFolderStateInitialized = false;
+    status.innerHTML = '<span class="loading-spinner" role="status" aria-label="Loading admin data"></span> Loading users and videos...';
+    try {
+        [adminUsers, adminVideos] = await Promise.all([
+            apiRequest('/admin/users'),
+            apiRequest('/admin/videos')
+        ]);
+        status.innerText = '';
+        adminUserSearch = '';
+        adminVideoSearch = '';
+        document.getElementById('admin-user-search').value = '';
+        document.getElementById('admin-video-search').value = '';
+        renderAdminUsers();
+        if (adminUsers.length) selectAdminUser(adminUsers[0]);
+    } catch (error) {
+        status.innerText = `Unable to load admin data: ${error.message}`;
+    }
+}
+
+function renderAdminUsers() {
+    const users = document.getElementById('admin-users');
+    users.innerHTML = '';
+    const query = adminUserSearch.trim().toLowerCase();
+    adminUsers.filter(user => !query || `${user.email || ''} ${user.user_id}`.toLowerCase().includes(query)).forEach(user => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'admin-user-button';
+        button.classList.toggle('active', selectedAdminUser?.user_id === user.user_id);
+        button.innerText = `${user.email || user.user_id}${user.admin_access ? ' (Admin)' : ''}`;
+        button.onclick = () => selectAdminUser(user);
+        users.appendChild(button);
+    });
+}
+
+function selectAdminUser(user) {
+    if (selectedAdminUser?.user_id !== user.user_id && adminChangesPending) {
+        document.getElementById('admin-status').innerText = 'Save the current changes before selecting another user.';
+        return;
+    }
+    selectedAdminUser = user;
+    adminDraftAccess = new Map();
+    adminOriginalAccess = new Map();
+    adminVideos.forEach(video => {
+        const access = [...(video.user_access || [])];
+        adminDraftAccess.set(video.path, access);
+        adminOriginalAccess.set(video.path, [...access]);
+    });
+    adminDraftNewVideosAccess = user.new_videos_access !== false;
+    adminOriginalNewVideosAccess = adminDraftNewVideosAccess;
+    adminChangesPending = false;
+    renderAdminUsers();
+    const title = document.getElementById('admin-video-title');
+    title.innerText = user.admin_access ? `${user.email} - all videos (admin)` : `Videos for ${user.email}`;
+    renderAdminVideos();
+}
+
+function adminVideoIsAccessible(video) {
+    if (!selectedAdminUser) return false;
+    if (selectedAdminUser.admin_access) return true;
+    const access = adminDraftAccess.get(video.path) || [];
+    return !access.length
+        ? adminDraftNewVideosAccess
+        : access.includes(selectedAdminUser.email.toLowerCase());
+}
+
+function buildAdminVideoTree(videos) {
+    const root = { folders: new Map(), videos: [] };
+    videos.forEach(video => {
+        const parts = video.path.split('/').filter(Boolean);
+        const folderParts = parts.slice(1, -1); // Ignore the tab-level root.
+        let node = root;
+        folderParts.forEach((folderName, index) => {
+            if (!node.folders.has(folderName)) {
+                const parentPath = folderParts.slice(0, index).join('/');
+                node.folders.set(folderName, {
+                    name: folderName,
+                    key: parentPath ? `${parentPath}/${folderName}` : folderName,
+                    folders: new Map(),
+                    videos: []
+                });
+            }
+            node = node.folders.get(folderName);
+        });
+        node.videos.push(video);
+    });
+    return root;
+}
+
+function renderAdminFolder(folder, depth) {
+    const container = document.createElement('div');
+    container.className = 'admin-folder';
+    const descendants = [];
+    const collect = node => {
+        descendants.push(...node.videos);
+        node.folders.forEach(collect);
+    };
+    collect(folder);
+    if (descendants.length === 1) return renderAdminVideoRow(descendants[0]);
+
+    const row = document.createElement('div');
+    row.className = 'admin-folder-row';
+    row.style.marginLeft = `${depth * 18}px`;
+    const toggle = document.createElement('button');
+    toggle.className = 'admin-folder-toggle';
+    toggle.type = 'button';
+    const collapsed = adminCollapsedFolders.has(folder.key);
+    toggle.innerText = collapsed ? '▸' : '▾';
+    toggle.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${folder.name}`);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.onclick = () => {
+        if (adminCollapsedFolders.has(folder.key)) adminCollapsedFolders.delete(folder.key);
+        else adminCollapsedFolders.add(folder.key);
+        renderAdminVideos();
+    };
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    const accessibleCount = descendants.filter(adminVideoIsAccessible).length;
+    checkbox.checked = accessibleCount === descendants.length;
+    checkbox.indeterminate = accessibleCount > 0 && accessibleCount < descendants.length;
+    checkbox.disabled = selectedAdminUser?.admin_access;
+    checkbox.onchange = () => {
+        descendants.forEach(video => {
+            const next = adminVideoAccessForUser(video, selectedAdminUser, checkbox.checked);
+            adminDraftAccess.set(video.path, next);
+        });
+        adminChangesPending = true;
+        document.getElementById('admin-status').innerText = 'Unsaved changes';
+        renderAdminVideos();
+    };
+    const name = document.createElement('span');
+    name.className = 'admin-folder-name';
+    name.innerText = `📁 ${folder.name}`;
+    const count = document.createElement('span');
+    count.className = 'admin-folder-count';
+    count.innerText = `(${descendants.length})`;
+    row.append(toggle, checkbox, name, count);
+    container.appendChild(row);
+
+    const children = document.createElement('div');
+    children.className = 'admin-folder-children';
+    children.classList.toggle('collapsed', collapsed);
+    folder.folders.forEach(child => children.appendChild(renderAdminFolder(child, depth + 1)));
+    folder.videos
+        .slice()
+        .sort((left, right) => left.path.localeCompare(right.path, undefined, { numeric: true, sensitivity: 'base' }))
+        .forEach(video => children.appendChild(renderAdminVideoRow(video)));
+    container.appendChild(children);
+    return container;
+}
+
+function renderAdminVideoRow(video) {
+    const row = document.createElement('label');
+    row.className = 'admin-video-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = adminVideoIsAccessible(video);
+    checkbox.disabled = selectedAdminUser?.admin_access;
+    checkbox.onchange = () => updateAdminVideoAccess(video, checkbox);
+    const name = document.createElement('span');
+    name.className = 'admin-video-name';
+    const parts = video.path.split('/').filter(Boolean);
+    name.innerText = (parts[parts.length - 1] || video.path).replace(/\.[^.]+$/, '');
+    name.title = video.path;
+    row.append(checkbox, name);
+    return row;
+}
+
+function renderAdminVideoTree(tree, container) {
+    tree.folders.forEach(folder => container.appendChild(renderAdminFolder(folder, 0)));
+    tree.videos
+        .slice()
+        .sort((left, right) => left.path.localeCompare(right.path, undefined, { numeric: true, sensitivity: 'base' }))
+        .forEach(video => container.appendChild(renderAdminVideoRow(video)));
+}
+
+function renderAdminVideos() {
+    const videos = document.getElementById('admin-videos');
+    videos.innerHTML = '';
+    const selectAll = document.getElementById('admin-select-all');
+    const deselectAll = document.getElementById('admin-deselect-all');
+    const search = document.getElementById('admin-video-search');
+    const bulkActions = document.querySelector('.admin-bulk-actions');
+    const permissionMessage = document.getElementById('admin-video-permission-message');
+    const newVideosRow = document.getElementById('admin-new-videos-access-row');
+    const newVideosCheckbox = document.getElementById('admin-new-videos-access');
+    const query = adminVideoSearch.trim().toLowerCase();
+    const visibleVideos = adminVideos.filter(video => !query || video.path.toLowerCase().includes(query));
+    selectAll.disabled = !selectedAdminUser || selectedAdminUser.admin_access;
+    deselectAll.disabled = !selectedAdminUser || selectedAdminUser.admin_access;
+    const isAdminUser = !!selectedAdminUser?.admin_access;
+    search.classList.toggle('hidden', isAdminUser);
+    bulkActions.classList.toggle('hidden', isAdminUser);
+    permissionMessage.classList.toggle('hidden', !isAdminUser);
+    newVideosRow.classList.toggle('hidden', isAdminUser);
+    newVideosCheckbox.checked = adminDraftNewVideosAccess;
+    newVideosCheckbox.disabled = isAdminUser;
+    if (!selectedAdminUser) return;
+    const tree = buildAdminVideoTree(visibleVideos);
+    if (!adminFolderStateInitialized) {
+        const collapseFolders = node => node.folders.forEach(folder => {
+            adminCollapsedFolders.add(folder.key);
+            collapseFolders(folder);
+        });
+        collapseFolders(tree);
+        adminFolderStateInitialized = true;
+    }
+    renderAdminVideoTree(tree, videos);
+}
+
+function adminVideoAccessForUser(video, user, checked, currentAccess = adminDraftAccess.get(video.path) || []) {
+    const email = user.email.toLowerCase();
+    const allowsNewVideos = user === selectedAdminUser ? adminDraftNewVideosAccess : user.new_videos_access !== false;
+    const previous = [...currentAccess];
+    let next = [...previous];
+    if (checked) {
+        if (!next.length) return allowsNewVideos ? next : [email];
+        if (!next.includes(email)) next.push(email);
+    } else if (!next.length) {
+        next = adminUsers.filter(item => !item.admin_access && item.email).map(item => item.email.toLowerCase());
+        next = next.filter(item => item !== email);
+    } else {
+        next = next.filter(item => item !== email);
+    }
+    return next;
+}
+
+async function setAdminVideoAccess(video, next) {
+    const updated = await apiRequest(`/admin/video-access?path=${encodeURIComponent(video.path)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ user_access: next })
+    });
+    video.user_access = updated.user_access || [];
+}
+
+async function updateAdminVideoAccess(video, checkbox) {
+    if (!selectedAdminUser || selectedAdminUser.admin_access) return;
+    const next = adminVideoAccessForUser(video, selectedAdminUser, checkbox.checked);
+    adminDraftAccess.set(video.path, next);
+    adminChangesPending = true;
+    document.getElementById('admin-status').innerText = 'Unsaved changes';
+    renderAdminVideos();
+}
+
+function updateAdminNewVideosAccess(checkbox) {
+    if (!selectedAdminUser || selectedAdminUser.admin_access) return;
+    adminDraftNewVideosAccess = checkbox.checked;
+    adminChangesPending = true;
+    document.getElementById('admin-status').innerText = 'Unsaved changes';
+    renderAdminVideos();
+}
+
+async function setAllAdminVideoAccess(checked) {
+    if (!selectedAdminUser || selectedAdminUser.admin_access) return;
+    const videos = adminVideos.filter(video => {
+        const query = adminVideoSearch.trim().toLowerCase();
+        return !query || video.path.toLowerCase().includes(query);
+    });
+    videos.forEach(video => adminDraftAccess.set(
+        video.path,
+        adminVideoAccessForUser(video, selectedAdminUser, checked)
+    ));
+    adminChangesPending = true;
+    document.getElementById('admin-status').innerText = 'Unsaved changes';
+    renderAdminVideos();
+}
+
+function sameAccessList(left, right) {
+    return left.length === right.length && left.every((email, index) => email === right[index]);
+}
+
+async function saveAdminChanges() {
+    if (!selectedAdminUser || selectedAdminUser.admin_access || !adminChangesPending) return;
+    const changes = adminVideos.filter(video => !sameAccessList(
+        adminDraftAccess.get(video.path) || [],
+        adminOriginalAccess.get(video.path) || []
+    ));
+    const newVideosAccessChanged = adminDraftNewVideosAccess !== adminOriginalNewVideosAccess;
+    if (!changes.length && !newVideosAccessChanged) {
+        adminChangesPending = false;
+        renderAdminVideos();
+        return;
+    }
+    const loadingModal = document.getElementById('admin-save-modal');
+    loadingModal.classList.remove('hidden');
+    try {
+        const requests = changes.map(video => setAdminVideoAccess(
+            video,
+            adminDraftAccess.get(video.path) || []
+        ));
+        if (newVideosAccessChanged) {
+            requests.push(apiRequest(`/admin/user-access?user_id=${encodeURIComponent(selectedAdminUser.user_id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ new_videos_access: adminDraftNewVideosAccess })
+            }));
+        }
+        const results = await Promise.all(requests);
+        changes.forEach(video => {
+            const saved = [...(video.user_access || [])];
+            adminOriginalAccess.set(video.path, saved);
+            adminDraftAccess.set(video.path, [...saved]);
+        });
+        if (newVideosAccessChanged) {
+            const updatedUser = results[changes.length];
+            selectedAdminUser.new_videos_access = updatedUser.new_videos_access;
+            adminUsers = adminUsers.map(user => user.user_id === selectedAdminUser.user_id ? selectedAdminUser : user);
+            adminOriginalNewVideosAccess = adminDraftNewVideosAccess;
+        }
+        adminChangesPending = false;
+        document.getElementById('admin-status').innerText = 'Changes saved';
+        renderAdminVideos();
+    } catch (error) {
+        document.getElementById('admin-status').innerText = `Unable to save changes: ${error.message}`;
+    } finally {
+        loadingModal.classList.add('hidden');
     }
 }
 
@@ -533,7 +885,12 @@ async function loadContinueWatching(generation) {
             }
         });
         progressByPath.forEach((local, mediaPath) => {
-            if (!remotePaths.has(mediaPath)) syncs.push(saveProgressToApi(local));
+            // A successful progress fetch is authoritative. Do not write a
+            // stale cached row back after it was removed from the database.
+            if (!remotePaths.has(mediaPath)) {
+                progressByPath.delete(mediaPath);
+                removeLocalProgress(mediaPath);
+            }
         });
         await Promise.all(syncs);
     } catch (error) {
@@ -823,5 +1180,21 @@ function playMedia(path) {
     const watchPage = window.location.protocol === 'file:' ? 'watch.html' : 'watch';
     window.location.href = `${watchPage}?path=${encodeURIComponent(path)}`;
 }
+
+document.getElementById('admin-close').onclick = () => {
+    document.getElementById('admin-modal').classList.add('hidden');
+};
+document.getElementById('admin-user-search').oninput = event => {
+    adminUserSearch = event.target.value;
+    renderAdminUsers();
+};
+document.getElementById('admin-video-search').oninput = event => {
+    adminVideoSearch = event.target.value;
+    renderAdminVideos();
+};
+document.getElementById('admin-select-all').onclick = () => setAllAdminVideoAccess(true);
+document.getElementById('admin-deselect-all').onclick = () => setAllAdminVideoAccess(false);
+document.getElementById('admin-save').onclick = saveAdminChanges;
+document.getElementById('admin-new-videos-access').onchange = event => updateAdminNewVideosAccess(event.target);
 
 checkAuth();

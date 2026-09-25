@@ -74,6 +74,14 @@ class ProfileRequest(BaseModel):
     subtitles_enabled: bool
 
 
+class AdminVideoAccessRequest(BaseModel):
+    user_access: list[str]
+
+
+class AdminNewVideosAccessRequest(BaseModel):
+    new_videos_access: bool
+
+
 def reject_unallowed(email: str) -> None:
     normalized_email = email.strip().casefold()
     if not normalized_email:
@@ -130,7 +138,11 @@ def supabase_request(method: str, path: str, token: str, **kwargs: Any) -> Any:
     request_headers.update(kwargs.pop("headers", {}))
     response = httpx.request(method, f"{SUPABASE_URL}{path}", headers=request_headers, timeout=30, **kwargs)
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Supabase request failed ({response.status_code}).")
+        upstream_detail = response.text.strip().replace("\n", " ")[:500]
+        detail = f"Supabase request failed ({response.status_code})"
+        if upstream_detail:
+            detail += f": {upstream_detail}"
+        raise HTTPException(status_code=502, detail=detail)
     return response.json() if response.content else None
 
 
@@ -169,7 +181,7 @@ def session(user: Any = Depends(current_user)) -> dict[str, Any]:
 @app.get("/api/profile")
 def profile(user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
     params = {
-        "select": "user_id,subtitles_enabled",
+        "select": "user_id,subtitles_enabled,admin_access,new_videos_access",
         "user_id": f"eq.{user.id}",
         "limit": "1",
     }
@@ -185,7 +197,7 @@ def profile(user: Any = Depends(current_user), token: str = Depends(current_toke
         headers={"Prefer": "return=representation"},
         json=row,
     ) or []
-    return created[0] if created else row
+    return created[0] if created else {**row, "admin_access": False, "new_videos_access": True}
 
 
 @app.patch("/api/profile")
@@ -200,6 +212,18 @@ def update_profile(payload: ProfileRequest, user: Any = Depends(current_user), t
         json=row,
     ) or []
     return data[0] if data else row
+
+
+def admin_token(user: Any = Depends(current_user), token: str = Depends(current_token)) -> str:
+    data = supabase_request(
+        "GET",
+        "/rest/v1/profiles",
+        token,
+        params={"select": "admin_access", "user_id": f"eq.{user.id}", "limit": "1"},
+    ) or []
+    if not data or not data[0].get("admin_access"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    return token
 
 
 def catalog_rows(token: str, table: str, select: str, filters: dict[str, str] | None = None) -> list[dict[str, Any]]:
@@ -307,6 +331,58 @@ def matching_subtitle(token: str, video_path: str) -> str:
     return rows[0].get("subtitle_path", "") if rows else ""
 
 
+def ensure_video_access(token: str, video_path: str) -> None:
+    rows = supabase_request(
+        "GET",
+        "/rest/v1/videos",
+        token,
+        params={"select": "path", "path": f"eq.{video_path}", "limit": "1"},
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+
+
+def ensure_media_asset_access(token: str, asset_path: str) -> None:
+    visible_videos = supabase_request(
+        "GET",
+        "/rest/v1/videos",
+        token,
+        params={"select": "path,folder_path,preview_image_path,subtitle_path"},
+    ) or []
+    if any(asset_path in {row.get("path"), row.get("preview_image_path"), row.get("subtitle_path")} for row in visible_videos):
+        return
+
+    visible_paths = {row.get("path") for row in visible_videos}
+    preview_rows = supabase_request(
+        "GET",
+        "/rest/v1/video_previews",
+        token,
+        params={"select": "media_path,sheets"},
+    ) or []
+    for row in preview_rows:
+        if row.get("media_path") in visible_paths and asset_path in (row.get("sheets") or []):
+            return
+
+    object_rows = supabase_request(
+        "GET",
+        "/rest/v1/media_objects",
+        token,
+        params={"select": "folder_path,name", "path": f"eq.{asset_path}", "kind": "eq.image", "limit": "1"},
+    ) or []
+    if object_rows:
+        folder_path = object_rows[0].get("folder_path", "")
+        image_stem = object_rows[0].get("name", "").rsplit(".", 1)[0]
+        artwork_folder = f"{folder_path}/{image_stem}" if folder_path else image_stem
+        folder_prefix = f"{artwork_folder}/" if artwork_folder else ""
+        if any(
+            row.get("folder_path") == folder_path
+            or (folder_prefix and row.get("path", "").startswith(folder_prefix))
+            for row in visible_videos
+        ):
+            return
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
+
+
 @app.get("/api/media/stream")
 def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
     safe_path = str(PurePosixPath("/" + path)).lstrip("/")
@@ -322,11 +398,13 @@ def files(_: Any = Depends(current_user), token: str = Depends(current_token)) -
 
 @app.get("/api/media/subtitle")
 def subtitle(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, str]:
+    ensure_video_access(token, video_path)
     return {"path": matching_subtitle(token, video_path)}
 
 
 @app.get("/api/media/credits")
 def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    ensure_video_access(token, video_path)
     data = supabase_request(
         "GET",
         "/rest/v1/video_credits",
@@ -345,7 +423,90 @@ def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(current
 @app.get("/api/previews")
 def previews(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
     select = "media_path,sheets,duration_seconds,interval_seconds,columns,rows,thumbnail_width,thumbnail_height"
-    return supabase_request("GET", f"/rest/v1/video_previews?select={select}", token) or []
+    visible = {
+        row["path"] for row in supabase_request(
+            "GET", "/rest/v1/videos", token, params={"select": "path"}
+        ) or []
+    }
+    rows = supabase_request("GET", f"/rest/v1/video_previews?select={select}", token) or []
+    return [row for row in rows if row.get("media_path") in visible]
+
+
+@app.get("/api/admin/users")
+def admin_users(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
+    return supabase_request("POST", "/rest/v1/rpc/admin_list_users", token, json={}) or []
+
+
+@app.patch("/api/admin/user-access")
+def update_admin_user_access(
+    payload: AdminNewVideosAccessRequest,
+    user_id: str = Query(..., min_length=1),
+    token: str = Depends(admin_token),
+) -> dict[str, Any]:
+    try:
+        data = supabase_request(
+            "POST",
+            "/rest/v1/rpc/admin_set_new_videos_access",
+            token,
+            json={"target_user_id": user_id, "enabled": payload.new_videos_access},
+        ) or []
+    except HTTPException:
+        # Keep existing profile rows compatible while PostgREST refreshes its
+        # RPC schema cache after the new migration is applied.
+        data = supabase_request(
+            "PATCH",
+            "/rest/v1/profiles",
+            token,
+            params={"user_id": f"eq.{user_id}", "select": "user_id,admin_access,new_videos_access"},
+            headers={"Prefer": "return=representation"},
+            json={"new_videos_access": payload.new_videos_access},
+        ) or []
+    if not data:
+        data = supabase_request(
+            "GET",
+            "/rest/v1/profiles",
+            token,
+            params={
+                "select": "user_id,admin_access,new_videos_access",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        ) or []
+    if not data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
+    if data[0].get("new_videos_access") != payload.new_videos_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unable to update new video access.")
+    return data[0]
+
+
+@app.get("/api/admin/videos")
+def admin_videos(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
+    return supabase_request(
+        "GET",
+        "/rest/v1/videos",
+        token,
+        params={"select": "path,name,user_access", "order": "path.asc"},
+    ) or []
+
+
+@app.patch("/api/admin/video-access")
+def update_admin_video_access(
+    payload: AdminVideoAccessRequest,
+    path: str = Query(..., min_length=1),
+    token: str = Depends(admin_token),
+) -> dict[str, Any]:
+    emails = sorted({email.strip().casefold() for email in payload.user_access if email.strip()})
+    data = supabase_request(
+        "PATCH",
+        "/rest/v1/videos",
+        token,
+        params={"path": f"eq.{path}", "select": "path,name,user_access"},
+        headers={"Prefer": "return=representation"},
+        json={"user_access": emails},
+    ) or []
+    if not data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+    return data[0]
 
 
 @app.get("/api/progress")
@@ -398,6 +559,7 @@ async def media_file(media_path: str, request: Request, _: Any = Depends(current
     safe_path = str(PurePosixPath("/" + media_path)).lstrip("/")
     if not safe_path or safe_path.startswith(".."):
         raise HTTPException(status_code=400, detail="Invalid media path.")
+    ensure_media_asset_access(token, safe_path)
     media_url = f"{SUPABASE_URL}/storage/v1/object/{MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
     range_header = request.headers.get("range")
     headers = supabase_headers(token)

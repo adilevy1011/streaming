@@ -64,6 +64,38 @@
         .modal-card h2 { margin-top: 0; }
         .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
         .modal-actions button { width: auto; }
+        .admin-modal-card { width: min(900px, 100%); max-height: min(780px, 90vh); overflow: auto; }
+        .admin-modal-topbar { position: sticky; top: -24px; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 12px; background: #1e1e1e; }
+        .admin-modal-topbar h2 { margin: 0; }
+        .admin-modal-topbar button { margin: 0; }
+        .admin-modal-topbar .admin-save-button { background: #3ecf8e; color: #000; margin-left: auto; }
+        .admin-save-modal { z-index: 20; }
+        .admin-save-card { width: min(360px, 100%); text-align: center; }
+        .admin-save-card .loading-spinner { width: 26px; height: 26px; margin-bottom: 12px; }
+        .admin-layout { display: grid; grid-template-columns: minmax(180px, .35fr) minmax(0, 1fr); gap: 20px; }
+        .admin-users, .admin-videos { display: grid; gap: 8px; align-content: start; }
+        .admin-search { margin: 0 0 10px; }
+        .admin-bulk-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+        .admin-bulk-actions.hidden { display: none; }
+        .admin-bulk-actions button { flex: 1; margin: 0; padding: 8px 10px; background: #333; color: #fff; }
+        .admin-permission-message { padding: 14px; background: #292929; border-radius: 6px; color: #bbb; }
+        .admin-user-button { width: 100%; margin: 0; background: #292929; color: #fff; text-align: left; }
+        .admin-user-button.active { background: #3ecf8e; color: #000; }
+        .admin-folder { display: grid; gap: 6px; }
+        .admin-folder-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; background: #222; border: 1px solid #333; border-radius: 6px; }
+        .admin-folder-row input, .admin-video-row input { width: auto; margin: 0; }
+        .admin-folder-toggle { width: 24px; margin: 0; padding: 2px; background: transparent; color: #fff; }
+        .admin-folder-toggle:hover, .admin-folder-toggle:focus { background: #333; }
+        .admin-folder-name { font-weight: 600; overflow-wrap: anywhere; }
+        .admin-folder-count { color: #999; font-size: .9em; }
+        .admin-folder-children { display: grid; gap: 6px; margin-left: 18px; }
+        .admin-folder-children.collapsed { display: none; }
+        .admin-video-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; background: #292929; border-radius: 6px; }
+        .admin-video-row input { width: auto; margin: 0; }
+        .admin-video-name { overflow-wrap: anywhere; }
+        .admin-new-videos-access { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bbb; }
+        .admin-new-videos-access input { width: auto; margin: 0; }
+        @media (max-width: 600px) { .admin-layout { grid-template-columns: 1fr; } }
         .modal-cancel { background: #333; color: #fff; }
         .media-copy { min-width: 0; flex: 1; }
         .library-card { min-height: 68px; }
@@ -119,6 +151,7 @@
             <h1>Adlv Stream</h1>
             <div style="display: flex; gap: 10px; align-items: center;">
                 <button id="refresh-library-button" class="hidden" onclick="refreshLibrary()" style="width: auto;">Refresh library</button>
+                <button id="admin-actions-button" class="hidden" onclick="showAdminActions()" style="width: auto; background: #6f7bf7; color: #fff;">Admin Actions</button>
                 <button id="logout-button" class="hidden" onclick="logout()" style="width: auto; background: #ff4444; color: #fff;">Log Out</button>
             </div>
         </header>
@@ -168,6 +201,45 @@
                 <button id="refresh-confirm-cancel" class="modal-cancel">Cancel</button>
                 <button id="refresh-confirm-submit">Refresh library</button>
             </div>
+        </div>
+    </div>
+    <div id="admin-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title">
+        <div class="modal-card admin-modal-card">
+            <div class="admin-modal-topbar">
+                <h2 id="admin-modal-title">Admin Actions</h2>
+                <button id="admin-save" class="admin-save-button" type="button">Save</button>
+                <button id="admin-close" class="modal-cancel" type="button">Close</button>
+            </div>
+            <p class="muted">Select a user, then choose which videos they can access.</p>
+            <p id="admin-status" class="muted"></p>
+            <div class="admin-layout">
+                <div>
+                    <h3>Users</h3>
+                    <input id="admin-user-search" class="admin-search" type="search" placeholder="Search users...">
+                    <div id="admin-users" class="admin-users"></div>
+                </div>
+                <div>
+                    <h3 id="admin-video-title">Videos</h3>
+                    <label id="admin-new-videos-access-row" class="admin-new-videos-access">
+                        <input id="admin-new-videos-access" type="checkbox">
+                        Automatically allow new videos
+                    </label>
+                    <p id="admin-video-permission-message" class="admin-permission-message hidden">Permissions cannot be changed for admin users. Admins always have access to every video.</p>
+                    <input id="admin-video-search" class="admin-search" type="search" placeholder="Search videos...">
+                    <div class="admin-bulk-actions">
+                        <button id="admin-select-all" type="button">Select all</button>
+                        <button id="admin-deselect-all" type="button">Deselect all</button>
+                    </div>
+                    <div id="admin-videos" class="admin-videos"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="admin-save-modal" class="modal-backdrop admin-save-modal hidden" role="dialog" aria-modal="true" aria-labelledby="admin-save-title">
+        <div class="modal-card admin-save-card">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <h2 id="admin-save-title">Saving changes</h2>
+            <p class="muted">Please wait while video permissions are updated.</p>
         </div>
     </div>
     <script src="api.js"></script>

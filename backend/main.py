@@ -1,5 +1,8 @@
 import os
 import json
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 import asyncio
@@ -354,7 +357,31 @@ def matching_subtitle(token: str, video_path: str) -> str:
         token,
         params={"select": "subtitle_path", "path": f"eq.{safe_path}", "limit": "1"},
     ) or []
-    return rows[0].get("subtitle_path", "") if rows else ""
+    # A video without a sibling .srt has a NULL subtitle_path in the catalog.
+    # Normalize it so the API remains a successful empty lookup.
+    return (rows[0].get("subtitle_path") or "") if rows else ""
+
+
+def extract_embedded_subtitle(video_path: str) -> str:
+    """Extract the first subtitle stream from a local video as WebVTT."""
+    if shutil.which("ffmpeg") is None:
+        raise HTTPException(status_code=503, detail="Embedded subtitle extraction is unavailable.")
+
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", video_path,
+            "-map", "0:s:0",
+            "-c:s", "webvtt",
+            "-f", "webvtt", "pipe:1",
+        ],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise HTTPException(status_code=404, detail="No embedded subtitles found.")
+    return result.stdout.decode("utf-8-sig", errors="replace")
 
 
 def ensure_video_access(token: str, video_path: str) -> None:
@@ -951,6 +978,47 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
 def subtitle(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, str]:
     ensure_video_access(token, video_path)
     return {"path": matching_subtitle(token, video_path)}
+
+
+@app.get("/api/media/embedded-subtitle")
+async def embedded_subtitle(
+    video_path: str = Query(..., min_length=1),
+    _: Any = Depends(current_user),
+    token: str = Depends(current_token),
+) -> Response:
+    """Return the first subtitle stream stored inside a video container as WebVTT."""
+    safe_path = str(PurePosixPath("/" + video_path)).lstrip("/")
+    if not safe_path or safe_path.startswith(".."):
+        raise HTTPException(status_code=400, detail="Invalid media path.")
+    ensure_video_access(token, safe_path)
+
+    media_url = f"{SUPABASE_URL}/storage/v1/object/{MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
+    temp_path = ""
+    try:
+        suffix = Path(safe_path).suffix or ".video"
+        with tempfile.NamedTemporaryFile(prefix="embedded-subtitle-", suffix=suffix, delete=False) as temp_file:
+            temp_path = temp_file.name
+            async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
+                async with client.stream("GET", media_url, headers=supabase_headers(token)) as upstream:
+                    if upstream.status_code >= 400:
+                        raise HTTPException(status_code=404, detail="Media not found.")
+                    async for chunk in upstream.aiter_bytes(1024 * 1024):
+                        temp_file.write(chunk)
+        try:
+            webvtt = await run_in_threadpool(extract_embedded_subtitle, temp_path)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+            raise
+        return Response(content=webvtt, media_type="text/vtt")
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="Embedded subtitle extraction timed out.") from exc
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
 
 
 @app.get("/api/media/credits")

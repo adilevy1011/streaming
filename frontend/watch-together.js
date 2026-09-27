@@ -198,9 +198,23 @@ function revealControls() { timelineShell.classList.add('controls-visible'); cle
 async function loadSubtitles(path) {
     try {
         const result = await apiRequest(`/media/subtitle?video_path=${encodeURIComponent(path)}`);
-        if (!result?.path || result.path === subtitleUrl) return;
-        subtitleUrl = result.path;
-        const track = document.createElement('track'); track.kind = 'subtitles'; track.label = 'Subtitles'; track.srclang = 'en'; track.src = `/api/media/file/${result.path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`; track.default = false;
+        let trackUrl;
+        if (result?.path) {
+            trackUrl = `/api/media/file/${result.path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`;
+        } else {
+            const embeddedUrl = `/api/media/embedded-subtitle?video_path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+            const embeddedResponse = await fetch(embeddedUrl, { cache: 'no-store' });
+            if (embeddedResponse.status === 204) return;
+            if (!embeddedResponse.ok) {
+                const error = new Error(`Embedded subtitle request failed (${embeddedResponse.status})`);
+                error.status = embeddedResponse.status;
+                throw error;
+            }
+            trackUrl = embeddedUrl;
+        }
+        if (trackUrl === subtitleUrl) return;
+        subtitleUrl = trackUrl;
+        const track = document.createElement('track'); track.kind = 'subtitles'; track.label = 'Subtitles'; track.srclang = 'en'; track.src = trackUrl; track.default = false;
         player.appendChild(track); captionsOption.classList.remove('hidden');
     } catch (error) { if (error.status !== 404) console.warn('Unable to load subtitles', error); }
 }

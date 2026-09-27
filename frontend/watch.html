@@ -64,17 +64,6 @@
         .completion-actions.hidden { display: none; }
         .completion-actions button { min-width: 150px; }
         .completion-message { display: none !important; }
-        .watch-room { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-        .watch-room input { flex: 1 1 260px; min-width: 0; padding: 10px; border: 1px solid #333; border-radius: 8px; background: #1e1e1e; color: #fff; }
-        .watch-room button { margin: 0; }
-        .watch-room-status { color: #aaa; font-size: .9rem; }
-        .watch-room-participants { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; color: #bbb; font-size: .85rem; }
-        .watch-room-participant { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; background: #222; border-radius: 6px; }
-        .watch-room-participant button { padding: 2px 6px; font-size: .75rem; background: #a33; color: #fff; }
-        .room-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .72); }
-        .room-modal.hidden { display: none; }
-        .room-modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; box-shadow: 0 16px 48px rgba(0, 0, 0, .65); }
-        .room-modal-card button { min-width: 90px; }
         @media (max-width: 600px) {
             body { padding: 14px; }
             .container { width: 100%; }
@@ -127,27 +116,6 @@
                     <button id="library-button" class="back-button" type="button">← Back to library</button>
                 </div>
             </div>
-        </div>
-        <div class="watch-room" aria-label="Watch Together">
-            <button id="create-room" type="button">Create watch room</button>
-            <input id="room-link" type="text" readonly placeholder="Room link will appear here">
-            <button id="copy-room-link" class="back-button" type="button" disabled>Copy link</button>
-            <span id="watch-room-status" class="watch-room-status" aria-live="polite"></span>
-            <div id="watch-room-participants" class="watch-room-participants hidden" aria-live="polite"></div>
-        </div>
-    </div>
-    <div id="room-kick-modal" class="room-modal hidden" role="dialog" aria-modal="true" aria-labelledby="room-kick-title">
-        <div class="room-modal-card">
-            <h2 id="room-kick-title">Removed from watch room</h2>
-            <p>You have been removed from this room.</p>
-            <button id="room-kick-ok" type="button">OK</button>
-        </div>
-    </div>
-    <div id="room-sync-modal" class="room-modal hidden" role="dialog" aria-modal="true" aria-labelledby="room-sync-title">
-        <div class="room-modal-card">
-            <h2 id="room-sync-title">Join watch room</h2>
-            <p id="room-sync-message">This room is playing this video.</p>
-            <button id="room-sync-ok" type="button">Join</button>
         </div>
     </div>
     <script src="api.js"></script>

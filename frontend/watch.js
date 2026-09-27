@@ -2,7 +2,7 @@ const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const PROGRESS_SAVE_INTERVAL = 2000;
 const query = new URLSearchParams(window.location.search);
 const path = query.get('path');
-let roomId = query.get('room');
+let roomId = null;
 const player = document.getElementById('video-player');
 const timelineShell = document.getElementById('timeline-shell');
 const previewTimeline = document.getElementById('preview-timeline');
@@ -708,18 +708,32 @@ async function attachMatchingSubtitle(videoPath) {
         if (error?.status !== 404) console.warn('Unable to check for matching subtitles', error);
         return;
     }
-    if (!subtitlePath) return;
     try {
-        const response = await fetch(`/api/media/file/${subtitlePath.split('/').map(encodeURIComponent).join('/')}`, {
-            headers: { Authorization: `Bearer ${getAccessToken()}` },
-            cache: 'no-store'
-        });
-        if (!response.ok) {
-            const error = new Error(`Subtitle request failed (${response.status})`);
-            error.status = response.status;
-            throw error;
+        let webVtt;
+        if (subtitlePath) {
+            const response = await fetch(`/api/media/file/${subtitlePath.split('/').map(encodeURIComponent).join('/')}`, {
+                headers: { Authorization: `Bearer ${getAccessToken()}` },
+                cache: 'no-store'
+            });
+            if (!response.ok) {
+                const error = new Error(`Subtitle request failed (${response.status})`);
+                error.status = response.status;
+                throw error;
+            }
+            webVtt = srtToWebVtt(await response.text());
+        } else {
+            const response = await fetch(`/api/media/embedded-subtitle?video_path=${encodeURIComponent(videoPath)}`, {
+                headers: { Authorization: `Bearer ${getAccessToken()}` },
+                cache: 'no-store'
+            });
+            if (response.status === 204) return;
+            if (!response.ok) {
+                const error = new Error(`Embedded subtitle request failed (${response.status})`);
+                error.status = response.status;
+                throw error;
+            }
+            webVtt = await response.text();
         }
-        const webVtt = srtToWebVtt(await response.text());
         if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);
         subtitleObjectUrl = URL.createObjectURL(new Blob([webVtt], { type: 'text/vtt' }));
         const track = document.createElement('track');

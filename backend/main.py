@@ -861,6 +861,11 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
             updated = await apply_room_command(room_id, command, user.id)
             if updated is None:
                 await websocket.send_json({"type": "error", "detail": "Invalid watch command."})
+            else:
+                # Deliver an acknowledgement directly to the sender as well
+                # as through Redis pub/sub. This keeps controls responsive if
+                # the sender's pub/sub listener briefly reconnects.
+                await websocket.send_json(updated)
     except WebSocketDisconnect:
         pass
     except HTTPException as exc:

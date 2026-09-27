@@ -27,6 +27,8 @@ const roomLink = document.getElementById('room-link');
 const copyRoomLinkButton = document.getElementById('copy-room-link');
 const roomStatus = document.getElementById('watch-room-status');
 const roomParticipants = document.getElementById('watch-room-participants');
+const kickedModal = document.getElementById('room-kick-modal');
+const kickedModalOk = document.getElementById('room-kick-ok');
 
 let currentUserId = '';
 let progressSaveTimer;
@@ -267,6 +269,19 @@ function sendRoomCommand(action, position = null, playbackRate = null) {
     }));
 }
 
+function showKickedModal() {
+    if (!kickedModal) {
+        window.location.href = window.location.protocol === 'file:' ? 'index.html' : '/';
+        return;
+    }
+    kickedModal.classList.remove('hidden');
+    kickedModalOk?.focus();
+}
+
+function returnToLibraryAfterKick() {
+    window.location.href = window.location.protocol === 'file:' ? 'index.html' : '/';
+}
+
 function renderRoomParticipants(participants) {
     latestRoomParticipants = participants;
     if (!roomIsOwner || !roomParticipants) return;
@@ -345,7 +360,7 @@ function connectWatchRoom() {
             return;
         }
         if (message.type === 'kicked') {
-            roomStatus.textContent = 'You have been permanently removed from this watch room.';
+            showKickedModal();
             return;
         }
         if (message.type === 'error') { roomStatus.textContent = message.detail || 'Room error'; return; }
@@ -354,9 +369,8 @@ function connectWatchRoom() {
     roomSocket.onclose = event => {
         if (generation !== roomConnectionGeneration) return;
         if ([4401, 4403, 4404, 4406].includes(event.code)) {
-            roomStatus.textContent = event.code === 4406
-                ? 'You have been permanently removed from this watch room.'
-                : 'Unable to join this watch room.';
+            if (event.code === 4406) showKickedModal();
+            else if (roomStatus) roomStatus.textContent = 'Unable to join this watch room.';
             return;
         }
         roomStatus.textContent = 'Disconnected; retrying…';
@@ -633,14 +647,25 @@ function srtToWebVtt(srtText) {
 async function attachMatchingSubtitle(videoPath) {
     captionsOption.classList.add('hidden');
     captionsToggle.checked = subtitlesEnabled;
+    let subtitlePath = '';
     try {
-        const subtitlePath = await findMatchingSubtitle(videoPath);
-        if (!subtitlePath) return;
+        subtitlePath = await findMatchingSubtitle(videoPath);
+    } catch (error) {
+        // A video without subtitles is a normal condition, not a player error.
+        if (error?.status !== 404) console.warn('Unable to check for matching subtitles', error);
+        return;
+    }
+    if (!subtitlePath) return;
+    try {
         const response = await fetch(`/api/media/file/${subtitlePath.split('/').map(encodeURIComponent).join('/')}`, {
             headers: { Authorization: `Bearer ${getAccessToken()}` },
             cache: 'no-store'
         });
-        if (!response.ok) throw new Error(`Subtitle request failed (${response.status})`);
+        if (!response.ok) {
+            const error = new Error(`Subtitle request failed (${response.status})`);
+            error.status = response.status;
+            throw error;
+        }
         const webVtt = srtToWebVtt(await response.text());
         if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);
         subtitleObjectUrl = URL.createObjectURL(new Blob([webVtt], { type: 'text/vtt' }));
@@ -653,7 +678,7 @@ async function attachMatchingSubtitle(videoPath) {
         track.track.mode = subtitlesEnabled ? 'showing' : 'disabled';
         captionsOption.classList.remove('hidden');
     } catch (error) {
-        console.warn('Unable to load matching subtitles', error);
+        if (error?.status !== 404) console.warn('Unable to load matching subtitles', error);
     }
 }
 
@@ -893,5 +918,7 @@ if (copyRoomLinkButton) copyRoomLinkButton.addEventListener('click', async () =>
         roomStatus.textContent = 'Copy the selected room link';
     }
 });
+
+if (kickedModalOk) kickedModalOk.addEventListener('click', returnToLibraryAfterKick);
 
 startWatching();

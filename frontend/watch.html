@@ -71,6 +71,10 @@
         .watch-room-participants { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; color: #bbb; font-size: .85rem; }
         .watch-room-participant { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; background: #222; border-radius: 6px; }
         .watch-room-participant button { padding: 2px 6px; font-size: .75rem; background: #a33; color: #fff; }
+        .room-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .72); }
+        .room-modal.hidden { display: none; }
+        .room-modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; box-shadow: 0 16px 48px rgba(0, 0, 0, .65); }
+        .room-modal-card button { min-width: 90px; }
         @media (max-width: 600px) {
             body { padding: 14px; }
             .container { width: 100%; }
@@ -130,6 +134,13 @@
             <button id="copy-room-link" class="back-button" type="button" disabled>Copy link</button>
             <span id="watch-room-status" class="watch-room-status" aria-live="polite"></span>
             <div id="watch-room-participants" class="watch-room-participants hidden" aria-live="polite"></div>
+        </div>
+    </div>
+    <div id="room-kick-modal" class="room-modal hidden" role="dialog" aria-modal="true" aria-labelledby="room-kick-title">
+        <div class="room-modal-card">
+            <h2 id="room-kick-title">Removed from watch room</h2>
+            <p>You have been removed from this room.</p>
+            <button id="room-kick-ok" type="button">OK</button>
         </div>
     </div>
     <script src="api.js"></script>

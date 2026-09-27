@@ -776,7 +776,7 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
             document.querySelectorAll('.continue-menu').forEach(other => { if (other !== menu) other.classList.add('hidden'); });
             menu.classList.toggle('hidden');
         };
-        itemHeader.append(name, menuButton);
+        itemHeader.append(name);
         const detail = document.createElement('small');
         detail.className = 'muted';
         detail.innerText = Number.isFinite(duration) && duration > 0
@@ -791,8 +791,8 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
         track.appendChild(fill);
         const content = document.createElement('div');
         content.className = 'preview-card-content';
-        content.append(itemHeader, menu, detail, track);
-        item.append(createVideoPreview(file), content);
+        content.append(itemHeader, detail, track);
+        item.append(createVideoPreview(file), content, menuButton, menu);
         item.onclick = () => playMedia(path, path);
         item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(path, path); };
         list.appendChild(item);

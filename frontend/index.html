@@ -115,11 +115,12 @@
         .preview-card-content .progress-track { width: 220px; max-width: 100%; }
         .continue-item-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
         .continue-name { display: block; overflow-wrap: anywhere; line-height: 1.35; }
-        .continue-menu-button, .remove-progress-button { flex: 0 0 auto; margin: -8px -8px 0 0; padding: 2px 8px; background: transparent; color: #ddd; font-size: 1.3rem; line-height: 1; }
+        .continue-menu-button { position: absolute; z-index: 4; top: 10px; right: 10px; margin: 0; padding: 2px 8px; background: rgba(42, 42, 42, .92); color: #ddd; font-size: 1.3rem; line-height: 1; }
+        .remove-progress-button { flex: 0 0 auto; margin: -8px -8px 0 0; padding: 2px 8px; background: transparent; color: #ddd; font-size: 1.3rem; line-height: 1; }
         .continue-menu-button:hover, .continue-menu-button:focus { background: #333; }
         .remove-progress-button { margin-top: -7px; background: #d33; color: #fff; font-size: 1.2rem; }
         .remove-progress-button:hover, .remove-progress-button:focus { background: #f44; }
-        .continue-menu { position: absolute; z-index: 2; right: 10px; margin-top: 2px; display: grid; min-width: 170px; padding: 4px; background: #292929; border: 1px solid #444; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+        .continue-menu { position: absolute; z-index: 5; top: 48px; right: 10px; display: grid; min-width: 170px; padding: 4px; background: #292929; border: 1px solid #444; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
         .continue-menu.hidden { display: none; }
         .continue-menu button { margin: 0; padding: 8px 10px; background: transparent; color: #fff; text-align: left; font-weight: normal; }
         .continue-menu button:hover, .continue-menu button:focus { background: #3a3a3a; }

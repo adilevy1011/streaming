@@ -858,6 +858,31 @@ function renderRecentlyAdded() {
         const item = document.createElement('li');
         item.className = 'continue-item media-preview-card';
         item.tabIndex = 0;
+        const progress = activeProgressByPath.get(file.path);
+        const menuButton = document.createElement('button');
+        menuButton.className = 'continue-menu-button';
+        menuButton.type = 'button';
+        menuButton.innerText = '...';
+        menuButton.setAttribute('aria-label', `Options for ${file.name || file.path}`);
+        const menu = document.createElement('div');
+        menu.className = 'continue-menu hidden';
+        const addMenuAction = (label, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.innerText = label;
+            button.onclick = event => { event.stopPropagation(); menu.classList.add('hidden'); action(); };
+            menu.appendChild(button);
+        };
+        addMenuAction('Watch', () => playMedia(file.path));
+        if (progress && !progress.completed && Number(progress.position_seconds) > 0) {
+            addMenuAction('Continue', () => playMedia(file.path));
+        }
+        addMenuAction('Watch together', () => createWatchRoomAndOpen(file.path));
+        menuButton.onclick = event => {
+            event.stopPropagation();
+            document.querySelectorAll('.continue-menu, .media-menu').forEach(other => { if (other !== menu) other.classList.add('hidden'); });
+            menu.classList.toggle('hidden');
+        };
         const name = document.createElement('span');
         name.className = 'continue-name';
         name.innerText = (file.name || file.path.split('/').pop() || file.path).replace(/\.[^.]+$/, '');
@@ -870,10 +895,10 @@ function renderRecentlyAdded() {
         const content = document.createElement('div');
         content.className = 'preview-card-content';
         content.append(name, detail);
-        item.append(createVideoPreview(file), content);
+        item.append(createVideoPreview(file), content, menuButton, menu);
         item.onclick = () => playMedia(file.path);
         item.onkeydown = event => {
-            if (event.key === 'Enter' || event.key === ' ') playMedia(file.path);
+            if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) playMedia(file.path);
         };
         list.appendChild(item);
     });

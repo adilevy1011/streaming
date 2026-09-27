@@ -183,8 +183,6 @@ async function loadProgress() {
         path,
         updated_at: data.updated_at || ''
     } : null;
-    // A successful request with no row means the progress was removed from
-    // the database. Do not resurrect it from localStorage.
     if (!remote) {
         if (local) removeLocalProgress(path);
         return null;
@@ -684,7 +682,6 @@ async function attachMatchingSubtitle(videoPath) {
     try {
         subtitlePath = await findMatchingSubtitle(videoPath);
     } catch (error) {
-        // A video without subtitles is a normal condition, not a player error.
         if (error?.status !== 404) console.warn('Unable to check for matching subtitles', error);
         return;
     }

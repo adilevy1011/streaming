@@ -213,7 +213,7 @@ function buildAdminVideoTree(videos) {
     const root = { folders: new Map(), videos: [] };
     videos.forEach(video => {
         const parts = video.path.split('/').filter(Boolean);
-        const folderParts = parts.slice(1, -1); // Ignore the tab-level root.
+        const folderParts = parts.slice(1, -1); 
         let node = root;
         folderParts.forEach((folderName, index) => {
             if (!node.folders.has(folderName)) {
@@ -949,8 +949,6 @@ async function loadContinueWatching(generation) {
             }
         });
         progressByPath.forEach((local, mediaPath) => {
-            // A successful progress fetch is authoritative. Do not write a
-            // stale cached row back after it was removed from the database.
             if (!remotePaths.has(mediaPath)) {
                 progressByPath.delete(mediaPath);
                 removeLocalProgress(mediaPath);
@@ -1165,8 +1163,6 @@ function renderMedia() {
     const folderVideoCounts = new Map();
     const folderArtworkByPath = new Map();
 
-    // Build these indexes once per render instead of repeatedly filtering allMedia
-    // for every folder card and every flattening decision.
     allMedia.forEach(file => {
         Object.entries(file.folderArtworks || {}).forEach(([folderPath, artwork]) => {
             if (!folderArtworkByPath.has(folderPath)) folderArtworkByPath.set(folderPath, artwork);
@@ -1181,7 +1177,6 @@ function renderMedia() {
         }
     });
     if (browsingCategory) {
-        // The index above includes descendants; retain only immediate children.
         const depth = browsePath.split('/').filter(Boolean).length + 1;
         [...folderPaths].forEach(folderPath => {
             if (folderPath.split('/').filter(Boolean).length !== depth) folderPaths.delete(folderPath);

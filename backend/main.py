@@ -19,7 +19,7 @@ from supabase import Client, create_client
 from starlette.concurrency import run_in_threadpool
 try:
     import redis.asyncio as redis
-except ImportError:  # pragma: no cover - development environments may not have Redis installed yet
+except ImportError: 
     redis = None
 
 
@@ -408,9 +408,6 @@ def ensure_media_asset_access(token: str, asset_path: str) -> None:
             return
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
 
-
-# Watch-room state is deliberately separate from video_progress: it is a
-# short-lived, room-wide playback snapshot rather than a user's resume point.
 ROOM_STATE_PREFIX = "watch:room:"
 ROOM_CHANNEL_PREFIX = "watch:room:events:"
 ROOM_META_PREFIX = "watch:room:meta:"
@@ -769,8 +766,7 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
                 await websocket.close(code=4404)
                 return
             room_connections.setdefault(room_id, set()).add(websocket)
-        # Read the state only after the Redis subscription is active. This
-        # prevents a joiner from missing a command between snapshot and subscribe.
+        
         state = await get_room_state(room_id)
         if not state:
             await websocket.send_json({"type": "error", "detail": "Watch room not found or expired."})

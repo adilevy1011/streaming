@@ -237,6 +237,7 @@ function applyRoomState(state) {
     if (!state || state.media_path !== path || Number(state.revision) <= latestRoomRevision) return;
     latestRoomRevision = Number(state.revision);
     latestRoomState = state;
+    if (state.playing && player.paused && !pendingRemotePlay) showSyncModal();
     const apply = () => {
         const target = roomPosition(state);
         markRemoteApply();
@@ -248,6 +249,10 @@ function applyRoomState(state) {
             playbackRate.value = String(state.playback_rate);
         }
         if (state.playing) {
+            if (pendingRemotePlay) {
+                updatePlayerControls();
+                return;
+            }
             player.play().then(hideSyncModal).catch(showSyncModal);
         } else {
             hideSyncModal();

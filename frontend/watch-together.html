@@ -19,7 +19,7 @@
         .video-frame.user-idle { cursor: none; }
         video { display: block; width: 100%; max-height: 78vh; background: #000; }
         .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
-        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
         .timeline-shell { position: absolute; inset: auto 0 0; z-index: 2; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0,0,0,.9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
         .timeline-shell.controls-visible, .video-frame.paused .timeline-shell { opacity: 1; pointer-events: auto; }
         .timeline-shell > input { display: block; width: 100%; margin: 0 0 7px; accent-color: #3ecf8e; cursor: pointer; }

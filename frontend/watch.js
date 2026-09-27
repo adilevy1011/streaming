@@ -29,6 +29,8 @@ const roomStatus = document.getElementById('watch-room-status');
 const roomParticipants = document.getElementById('watch-room-participants');
 const kickedModal = document.getElementById('room-kick-modal');
 const kickedModalOk = document.getElementById('room-kick-ok');
+const syncModal = document.getElementById('room-sync-modal');
+const syncModalOk = document.getElementById('room-sync-ok');
 
 let currentUserId = '';
 let progressSaveTimer;
@@ -58,6 +60,7 @@ let roomParticipantId = '';
 let roomIsOwner = false;
 let latestRoomParticipants = [];
 let latestRoomState = null;
+let pendingRemotePlay = false;
 
 let controlsHideTimer = null;
 let isScrubbing = false;
@@ -246,10 +249,9 @@ function applyRoomState(state) {
             playbackRate.value = String(state.playback_rate);
         }
         if (state.playing) {
-            player.play().catch(() => {
-                roomStatus.textContent = 'Click play once to allow synchronized playback.';
-            });
+            player.play().then(hideSyncModal).catch(showSyncModal);
         } else {
+            hideSyncModal();
             player.pause();
         }
         updatePlayerControls();
@@ -280,6 +282,26 @@ function showKickedModal() {
 
 function returnToLibraryAfterKick() {
     window.location.href = window.location.protocol === 'file:' ? 'index.html' : '/';
+}
+
+function showSyncModal() {
+    pendingRemotePlay = true;
+    if (!syncModal) return;
+    syncModal.classList.remove('hidden');
+    syncModalOk?.focus();
+}
+
+function hideSyncModal() {
+    pendingRemotePlay = false;
+    syncModal?.classList.add('hidden');
+}
+
+function enableSynchronizedPlayback() {
+    if (!latestRoomState?.playing) {
+        hideSyncModal();
+        return;
+    }
+    player.play().then(hideSyncModal).catch(showSyncModal);
 }
 
 function renderRoomParticipants(participants) {
@@ -815,12 +837,20 @@ videoFrame.addEventListener('pointerleave', () => {
 });
 videoFrame.addEventListener('click', event => {
     if (event.target.closest('.timeline-shell, #completion-actions, #completion-message')) return;
+    if (roomId && pendingRemotePlay && latestRoomState?.playing) {
+        enableSynchronizedPlayback();
+        return;
+    }
     if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
     else if (player.paused) player.play().catch(() => {});
     else player.pause();
 });
 
 playToggle.addEventListener('click', () => {
+    if (roomId && pendingRemotePlay && latestRoomState?.playing) {
+        enableSynchronizedPlayback();
+        return;
+    }
     if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
     else if (player.paused) player.play().catch(() => {});
     else player.pause();
@@ -920,5 +950,6 @@ if (copyRoomLinkButton) copyRoomLinkButton.addEventListener('click', async () =>
 });
 
 if (kickedModalOk) kickedModalOk.addEventListener('click', returnToLibraryAfterKick);
+if (syncModalOk) syncModalOk.addEventListener('click', enableSynchronizedPlayback);
 
 startWatching();

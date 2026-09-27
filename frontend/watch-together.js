@@ -3,6 +3,20 @@ const roomId = params.get('room');
 const videoPath = params.get('path');
 const token = getAccessToken();
 const player = document.getElementById('room-video');
+const videoFrame = document.getElementById('video-frame');
+const timelineShell = document.getElementById('timeline-shell');
+const timeline = document.getElementById('preview-timeline');
+const timelinePreview = document.getElementById('timeline-preview');
+const playerTime = document.getElementById('player-time');
+const playToggle = document.getElementById('play-toggle');
+const muteToggle = document.getElementById('mute-toggle');
+const volumeControl = document.getElementById('volume-control');
+const settingsToggle = document.getElementById('settings-toggle');
+const settingsMenu = document.getElementById('settings-menu');
+const playbackRate = document.getElementById('playback-rate');
+const captionsOption = document.getElementById('captions-option');
+const captionsToggle = document.getElementById('captions-toggle');
+const fullscreenToggle = document.getElementById('fullscreen-toggle');
 const statusElement = document.getElementById('status');
 const waitingElement = document.getElementById('waiting');
 const readyButton = document.getElementById('ready-button');
@@ -16,6 +30,10 @@ let started = false;
 let applyingRemote = false;
 let revision = -1;
 let loadedVideoPath = '';
+let isScrubbing = false;
+let subtitleUrl = '';
+let previewManifest = null;
+let previewSpriteUrls = [];
 
 if (!roomId || !videoPath || !token) location.href = '/';
 else {
@@ -70,6 +88,8 @@ function applyRoomState(state) {
     if (state.media_path && state.media_path !== loadedVideoPath) {
         loadedVideoPath = state.media_path;
         player.src = `/api/media/file/${loadedVideoPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`;
+        loadSubtitles(loadedVideoPath);
+        loadTimelinePreview(loadedVideoPath);
     }
     started = state.started === true;
     waitingElement.innerText = started
@@ -81,6 +101,7 @@ function applyRoomState(state) {
     applyingRemote = true;
     if (Number.isFinite(target) && Math.abs(player.currentTime - target) > 0.7) player.currentTime = target;
     player.playbackRate = Number(state.playback_rate || 1);
+    playbackRate.value = String(state.playback_rate || 1);
     const result = state.playing ? player.play() : Promise.resolve(player.pause());
     Promise.resolve(result).catch(() => { statusElement.innerText = 'Tap the video once if your browser blocks playback.'; }).finally(() => { applyingRemote = false; });
     statusElement.innerText = state.playing ? 'Playing together.' : 'Paused for everyone.';
@@ -102,9 +123,87 @@ document.getElementById('copy-link').onclick = async () => {
     try { await navigator.clipboard.writeText(linkElement.value); statusElement.innerText = 'Room link copied.'; }
     catch (_) { linkElement.select(); document.execCommand('copy'); statusElement.innerText = 'Room link copied.'; }
 };
-player.addEventListener('play', () => sendCommand('play'));
-player.addEventListener('pause', () => sendCommand('pause'));
-player.addEventListener('seeked', () => sendCommand('seek', { position: player.currentTime }));
-player.addEventListener('ratechange', () => sendCommand('rate', { playback_rate: player.playbackRate }));
+function updateControls() {
+    const duration = Number.isFinite(player.duration) ? player.duration : 0;
+    timeline.max = String(duration);
+    timeline.value = String(Math.min(duration, player.currentTime || 0));
+    playerTime.innerText = `${formatTime(player.currentTime)} / ${formatTime(duration)}`;
+    playToggle.innerText = player.paused ? '▶' : 'Ⅱ';
+    playToggle.setAttribute('aria-label', player.paused ? 'Play' : 'Pause');
+    muteToggle.innerText = player.muted || player.volume === 0 ? '🔇' : '🔊';
+    videoFrame.classList.toggle('paused', player.paused);
+}
+function formatTime(value) {
+    if (!Number.isFinite(value) || value < 0) return '0:00';
+    const seconds = Math.floor(value); const minutes = Math.floor(seconds / 60); const rest = String(seconds % 60).padStart(2, '0');
+    return `${minutes}:${rest}`;
+}
+function attemptLocalPlayback() {
+    if (!ready || !started) { statusElement.innerText = 'Press “I’m ready” before controlling playback.'; return; }
+    if (player.paused) player.play().catch(() => {}); else player.pause();
+}
+playToggle.onclick = attemptLocalPlayback;
+videoFrame.onclick = event => { if (!event.target.closest('.timeline-shell')) attemptLocalPlayback(); };
+player.addEventListener('play', () => { updateControls(); sendCommand('play'); });
+player.addEventListener('pause', () => { updateControls(); sendCommand('pause'); });
+player.addEventListener('timeupdate', updateControls);
+player.addEventListener('loadedmetadata', updateControls);
+player.addEventListener('durationchange', updateControls);
+player.addEventListener('seeked', () => { updateControls(); if (!isScrubbing) sendCommand('seek', { position: player.currentTime }); });
+timeline.addEventListener('pointerdown', () => { isScrubbing = true; });
+timeline.addEventListener('input', () => { player.currentTime = Number(timeline.value); updateControls(); });
+timeline.addEventListener('pointerup', () => { isScrubbing = false; sendCommand('seek', { position: player.currentTime }); });
+timeline.addEventListener('pointermove', updateTimelinePreview);
+timeline.addEventListener('pointerenter', () => { timelinePreview.style.display = 'block'; });
+timeline.addEventListener('pointerleave', () => { timelinePreview.style.display = 'none'; });
+muteToggle.onclick = () => { player.muted = !player.muted; updateControls(); };
+volumeControl.oninput = () => { player.volume = Number(volumeControl.value); player.muted = player.volume === 0; updateControls(); };
+settingsToggle.onclick = event => { event.stopPropagation(); settingsMenu.classList.toggle('open'); };
+playbackRate.onchange = () => { player.playbackRate = Number(playbackRate.value); sendCommand('rate', { playback_rate: player.playbackRate }); };
+captionsToggle.onchange = () => { [...player.textTracks].forEach(track => { track.mode = captionsToggle.checked ? 'showing' : 'disabled'; }); };
+fullscreenToggle.onclick = async () => {
+    if (document.fullscreenElement) return document.exitFullscreen();
+    if (videoFrame.requestFullscreen) await videoFrame.requestFullscreen();
+    else if (player.webkitEnterFullscreen) player.webkitEnterFullscreen();
+};
+document.addEventListener('click', event => { if (!settingsMenu.contains(event.target) && event.target !== settingsToggle) settingsMenu.classList.remove('open'); });
+videoFrame.addEventListener('pointermove', () => { timelineShell.classList.add('controls-visible'); clearTimeout(videoFrame.controlsTimer); videoFrame.controlsTimer = setTimeout(() => { if (!player.paused) timelineShell.classList.remove('controls-visible'); }, 2500); });
+async function loadSubtitles(path) {
+    try {
+        const result = await apiRequest(`/media/subtitle?video_path=${encodeURIComponent(path)}`);
+        if (!result?.path || result.path === subtitleUrl) return;
+        subtitleUrl = result.path;
+        const track = document.createElement('track'); track.kind = 'subtitles'; track.label = 'Subtitles'; track.srclang = 'en'; track.src = `/api/media/file/${result.path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`; track.default = false;
+        player.appendChild(track); captionsOption.classList.remove('hidden');
+    } catch (error) { if (error.status !== 404) console.warn('Unable to load subtitles', error); }
+}
+function applySpriteFrame(timeSeconds) {
+    if (!previewManifest || !previewSpriteUrls.length) return;
+    const frame = Math.max(0, Math.floor(timeSeconds / Number(previewManifest.interval_seconds || 1)));
+    const capacity = Number(previewManifest.columns) * Number(previewManifest.rows);
+    const sheetIndex = Math.min(Math.floor(frame / capacity), previewSpriteUrls.length - 1);
+    const cell = frame % capacity; const column = cell % Number(previewManifest.columns); const row = Math.floor(cell / Number(previewManifest.columns));
+    timelinePreview.style.backgroundImage = `url("${previewSpriteUrls[sheetIndex]}")`;
+    timelinePreview.style.backgroundSize = `${previewManifest.columns * 100}% ${previewManifest.rows * 100}%`;
+    timelinePreview.style.backgroundPosition = `${previewManifest.columns === 1 ? 0 : (column / (previewManifest.columns - 1)) * 100}% ${previewManifest.rows === 1 ? 0 : (row / (previewManifest.rows - 1)) * 100}%`;
+}
+async function loadTimelinePreview(path) {
+    try {
+        const data = (await apiRequest('/previews')).find(item => item.media_path === path);
+        if (!data?.sheets?.length) return;
+        previewManifest = data;
+        previewSpriteUrls = data.sheets.map(spritePath => `/api/media/file/${spritePath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`);
+        timeline.max = String(data.duration_seconds || player.duration || 0);
+        applySpriteFrame(0);
+    } catch (_) { /* Timeline remains usable without preview sheets. */ }
+}
+function updateTimelinePreview(event) {
+    if (!previewManifest) return;
+    const rect = timeline.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    timelinePreview.style.left = `${fraction * 100}%`;
+    applySpriteFrame(fraction * Number(timeline.max));
+}
+updateControls();
 function showRemoved() { document.getElementById('removed-modal').classList.remove('hidden'); readyButton.disabled = true; player.pause(); }
 document.getElementById('removed-ok').onclick = () => { location.href = '/'; };

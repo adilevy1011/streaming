@@ -413,6 +413,7 @@ ROOM_CHANNEL_PREFIX = "watch:room:events:"
 ROOM_META_PREFIX = "watch:room:meta:"
 ROOM_BANS_PREFIX = "watch:room:bans:"
 ROOM_PARTICIPANTS_PREFIX = "watch:room:participants:"
+ROOM_START_PREFIX = "watch:room:started:"
 ROOM_STATE_SCRIPT = """
 local raw = redis.call('GET', KEYS[1])
 if not raw then return false end
@@ -427,6 +428,7 @@ if action == 'seek' then
   position = tonumber(ARGV[2])
 elseif action == 'play' then
   state.playing = true
+  state.started = true
 elseif action == 'pause' then
   state.playing = false
 elseif action == 'rate' then
@@ -478,6 +480,7 @@ def initial_room_state(room_id: str, media_path: str) -> dict[str, Any]:
         "type": "state", "room_id": room_id, "media_path": media_path,
         "revision": 0, "action": "snapshot", "position": 0,
         "playing": False, "playback_rate": 1, "server_time_ms": now,
+        "started": False,
         "expires_at_ms": now + ROOM_TTL_SECONDS * 1000,
         "actor_id": None, "command_id": None,
     }
@@ -542,8 +545,12 @@ async def ban_room_user(room_id: str, user_id: str) -> None:
         room_bans.setdefault(room_id, set()).add(user_id)
 
 
-def participant_public_view(participant_id: str, participant: dict[str, Any]) -> dict[str, str]:
-    return {"participant_id": participant_id, "email": participant.get("email", "")}
+def participant_public_view(participant_id: str, participant: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "participant_id": participant_id,
+        "email": participant.get("email", ""),
+        "ready": bool(participant.get("ready", False)),
+    }
 
 
 async def get_room_participants(room_id: str) -> dict[str, dict[str, Any]]:
@@ -554,7 +561,7 @@ async def get_room_participants(room_id: str) -> dict[str, dict[str, Any]]:
 
 
 async def add_room_participant(room_id: str, participant_id: str, user: Any) -> None:
-    participant = {"user_id": user.id, "email": user.email or ""}
+    participant = {"user_id": user.id, "email": user.email or "", "ready": False}
     if redis_client:
         key = f"{ROOM_PARTICIPANTS_PREFIX}{room_id}"
         await redis_client.hset(key, participant_id, json.dumps(participant))
@@ -577,8 +584,6 @@ async def publish_room(room_id: str, payload: dict[str, Any]) -> None:
     for websocket in list(room_connections.get(room_id, set())):
         try:
             info = room_socket_info.get(websocket, {})
-            if payload.get("type") == "participants" and payload.get("target_user_id") != info.get("user_id"):
-                continue
             if payload.get("type") == "kick" and (
                     payload.get("participant_id") != info.get("participant_id")
                     and payload.get("target_user_id") != info.get("user_id")):
@@ -594,13 +599,44 @@ async def publish_room(room_id: str, payload: dict[str, Any]) -> None:
             room_connections.get(room_id, set()).discard(websocket)
 
 
-async def publish_participants(room_id: str, owner_id: str) -> None:
+async def publish_participants(room_id: str) -> None:
     participants = await get_room_participants(room_id)
     await publish_room(room_id, {
         "type": "participants",
-        "target_user_id": owner_id,
         "participants": [participant_public_view(pid, value) for pid, value in participants.items()],
     })
+
+
+async def set_participant_ready(room_id: str, participant_id: str) -> bool:
+    participants = await get_room_participants(room_id)
+    participant = participants.get(participant_id)
+    if not participant:
+        return False
+    participant["ready"] = True
+    if redis_client:
+        key = f"{ROOM_PARTICIPANTS_PREFIX}{room_id}"
+        await redis_client.hset(key, participant_id, json.dumps(participant))
+        await redis_client.expire(key, ROOM_TTL_SECONDS)
+    else:
+        room_participants.setdefault(room_id, {})[participant_id] = participant
+    return True
+
+
+async def maybe_start_room(room_id: str) -> dict[str, Any] | None:
+    state = await get_room_state(room_id)
+    participants = await get_room_participants(room_id)
+    if not state or state.get("started") or not participants or not all(p.get("ready") for p in participants.values()):
+        return None
+    if redis_client:
+        claimed = await redis_client.set(f"{ROOM_START_PREFIX}{room_id}", "1", nx=True, ex=ROOM_TTL_SECONDS)
+        if not claimed:
+            return None
+    else:
+        async with room_lock(room_id):
+            state = await get_room_state(room_id)
+            if not state or state.get("started"):
+                return None
+    return await apply_room_command(room_id, WatchCommand(action="play", command_id="room-ready"), "system")
 
 
 async def apply_room_command(room_id: str, command: WatchCommand, user_id: str) -> dict[str, Any] | None:
@@ -657,9 +693,7 @@ async def redis_room_listener(
             if message.get("type") == "message":
                 payload = json.loads(message["data"])
                 if payload.get("type") == "participants":
-                    if payload.get("target_user_id") != user_id:
-                        continue
-                    payload.pop("target_user_id", None)
+                    pass
                 elif payload.get("type") == "kick":
                     if (payload.get("participant_id") != participant_id
                             and payload.get("target_user_id") != user_id):
@@ -778,7 +812,7 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
         if not redis_client:
             room_socket_info[websocket] = {"participant_id": participant_id, "user_id": user.id}
         await websocket.send_json({"type": "participant", "participant_id": participant_id, "owner": is_owner})
-        await publish_participants(room_id, meta["owner_id"])
+        await publish_participants(room_id)
         await websocket.send_json(state)
         heartbeat = asyncio.create_task(room_heartbeat(websocket))
         command_times: deque[float] = deque()
@@ -806,6 +840,15 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
                     "client_received_ms": message.get("client_received_ms"),
                 })
                 continue
+            if message.get("type") == "ready":
+                if await set_participant_ready(room_id, participant_id):
+                    await publish_participants(room_id)
+                    current_state = await get_room_state(room_id)
+                    if current_state and current_state.get("started"):
+                        await websocket.send_json(current_state)
+                    else:
+                        await maybe_start_room(room_id)
+                continue
             if message.get("type") == "kick":
                 if not is_owner:
                     await websocket.send_json({"type": "error", "detail": "Only the room creator can kick participants."})
@@ -828,7 +871,7 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
                 for participant_id, participant in participants.items():
                     if participant.get("user_id") == target["user_id"]:
                         await remove_room_participant(room_id, participant_id)
-                await publish_participants(room_id, meta["owner_id"])
+                await publish_participants(room_id)
                 continue
             if message.get("type") != "command":
                 continue
@@ -854,6 +897,10 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
                 continue
             if command.command_id:
                 seen_commands.append(command.command_id)
+            current_state = await get_room_state(room_id)
+            if not current_state or not current_state.get("started"):
+                await websocket.send_json({"type": "error", "detail": "Everyone must be ready before playback can be controlled."})
+                continue
             updated = await apply_room_command(room_id, command, user.id)
             if updated is None:
                 await websocket.send_json({"type": "error", "detail": "Invalid watch command."})
@@ -880,7 +927,8 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
             await remove_room_participant(room_id, participant_id)
             room_socket_info.pop(websocket, None)
             if 'meta' in locals() and meta:
-                await publish_participants(room_id, meta["owner_id"])
+                await publish_participants(room_id)
+                await maybe_start_room(room_id)
         if heartbeat:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
@@ -1090,6 +1138,11 @@ def frontend_index() -> FileResponse:
 @app.get("/watch", include_in_schema=False)
 def frontend_watch() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "watch.html")
+
+
+@app.get("/watch-together", include_in_schema=False)
+def frontend_watch_together() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "watch-together.html")
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend")

@@ -1228,6 +1228,31 @@ function renderMedia() {
         const li = document.createElement('li');
         li.className = 'media-item library-card';
         li.tabIndex = 0;
+        const progress = activeProgressByPath.get(file.path);
+        const menuButton = document.createElement('button');
+        menuButton.className = 'media-menu-button';
+        menuButton.type = 'button';
+        menuButton.innerText = '...';
+        menuButton.setAttribute('aria-label', `Options for ${file.name}`);
+        menuButton.onclick = event => {
+            event.stopPropagation();
+            document.querySelectorAll('.media-menu').forEach(other => { if (other !== menu) other.classList.add('hidden'); });
+            menu.classList.toggle('hidden');
+        };
+        const menu = document.createElement('div');
+        menu.className = 'media-menu hidden';
+        const addMenuAction = (label, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.innerText = label;
+            button.onclick = event => { event.stopPropagation(); menu.classList.add('hidden'); action(); };
+            menu.appendChild(button);
+        };
+        addMenuAction('Watch', () => playMedia(file.path));
+        if (progress && !progress.completed && Number(progress.position_seconds) > 0) {
+            addMenuAction('Continue', () => playMedia(file.path));
+        }
+        addMenuAction('Watch together', () => createWatchRoomAndOpen(file.path));
         const manifest = previewManifests.get(file.path);
         const preview = document.createElement('div');
         preview.className = 'preview';
@@ -1248,9 +1273,9 @@ function renderMedia() {
             ? file.name.replace(/\.[^.]+$/, '')
             : file.path.replace(/\.[^.]+$/, '');
         copy.append(name);
-        li.append(preview, copy);
-        li.onclick = () => playMedia(file.path, file.path);
-        li.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') playMedia(file.path, file.path); };
+        li.append(preview, copy, menuButton, menu);
+        li.onclick = event => { if (!event.target.closest('button')) playMedia(file.path); };
+        li.onkeydown = event => { if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) playMedia(file.path); };
         listElement.appendChild(li);
     });
     addVideoPreviews();
@@ -1263,6 +1288,20 @@ function playMedia(path) {
     previewObserver?.disconnect();
     const watchPage = window.location.protocol === 'file:' ? 'watch.html' : 'watch';
     window.location.href = `${watchPage}?path=${encodeURIComponent(path)}`;
+}
+
+async function createWatchRoomAndOpen(path) {
+    try {
+        const room = await apiRequest('/watch/rooms', {
+            method: 'POST',
+            body: JSON.stringify({ media_path: path }),
+        });
+        const page = window.location.protocol === 'file:' ? 'watch-together.html' : 'watch-together';
+        window.location.href = `${page}?room=${encodeURIComponent(room.room_id)}&path=${encodeURIComponent(path)}`;
+    } catch (error) {
+        const status = document.getElementById('media-status');
+        status.innerText = error.message || 'Unable to create a watch room.';
+    }
 }
 
 document.getElementById('admin-close').onclick = () => {

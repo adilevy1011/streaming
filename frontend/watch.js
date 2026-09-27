@@ -62,6 +62,8 @@ let roomIsOwner = false;
 let latestRoomParticipants = [];
 let latestRoomState = null;
 let pendingRemotePlay = false;
+let roomPlaybackBlocked = false;
+let playbackUnlocked = false;
 
 let controlsHideTimer = null;
 let isScrubbing = false;
@@ -237,7 +239,6 @@ function applyRoomState(state) {
     if (!state || state.media_path !== path || Number(state.revision) <= latestRoomRevision) return;
     latestRoomRevision = Number(state.revision);
     latestRoomState = state;
-    if (state.playing && player.paused && !pendingRemotePlay) showSyncModal();
     const apply = () => {
         const target = roomPosition(state);
         markRemoteApply();
@@ -250,12 +251,25 @@ function applyRoomState(state) {
         }
         if (state.playing) {
             if (pendingRemotePlay) {
+                if (!roomPlaybackBlocked) {
+                    roomPlaybackBlocked = true;
+                    sendRoomCommand('pause');
+                }
                 updatePlayerControls();
                 return;
             }
-            player.play().then(hideSyncModal).catch(showSyncModal);
+            player.play().then(() => {
+                playbackUnlocked = true;
+                hideSyncModal();
+            }).catch(() => {
+                if (!roomPlaybackBlocked) {
+                    roomPlaybackBlocked = true;
+                    sendRoomCommand('pause');
+                }
+                showSyncModal();
+            });
         } else {
-            hideSyncModal();
+            if (!roomPlaybackBlocked) hideSyncModal();
             player.pause();
         }
         updatePlayerControls();
@@ -303,7 +317,7 @@ function showSyncModal() {
     pendingRemotePlay = true;
     if (!syncModal) return;
     const videoName = (path?.split('/').pop() || path || 'this video').replace(/\.[^.]+$/, '');
-    if (syncModalMessage) syncModalMessage.textContent = `This room is playing ${videoName}.`;
+    if (syncModalMessage) syncModalMessage.textContent = `Playback is paused for everyone until you join ${videoName}.`;
     syncModal.classList.remove('hidden');
     syncModalOk?.focus();
 }
@@ -314,11 +328,12 @@ function hideSyncModal() {
 }
 
 function enableSynchronizedPlayback() {
-    if (!latestRoomState?.playing) {
+    player.play().then(() => {
+        playbackUnlocked = true;
+        roomPlaybackBlocked = false;
         hideSyncModal();
-        return;
-    }
-    player.play().then(hideSyncModal).catch(showSyncModal);
+        sendRoomCommand('play');
+    }).catch(showSyncModal);
 }
 
 function renderRoomParticipants(participants) {

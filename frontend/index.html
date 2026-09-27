@@ -51,7 +51,7 @@
         .folder-back-button:hover, .folder-back-button:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
         #media-status:empty { display: none; }
         .media-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-        .media-item { padding: 14px; background: #1e1e1e; border: 1px solid #292929; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+        .media-item { position: relative; padding: 14px 52px 14px 14px; background: #1e1e1e; border: 1px solid #292929; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
         .media-item:hover, .media-item:focus { background: #2a2a2a; outline: 1px solid #3ecf8e; }
         .group-heading { grid-column: 1 / -1; color: #fff; font-size: 1.1rem; font-weight: 700; margin: 18px 0 0; padding: 10px 4px 2px; border-bottom: 1px solid #333; }
         .preview { width: 120px; height: 68px; flex: 0 0 120px; object-fit: cover; border-radius: 5px; background: #080808; pointer-events: none; }
@@ -124,6 +124,11 @@
         .continue-menu.hidden { display: none; }
         .continue-menu button { margin: 0; padding: 8px 10px; background: transparent; color: #fff; text-align: left; font-weight: normal; }
         .continue-menu button:hover, .continue-menu button:focus { background: #3a3a3a; }
+        .media-menu-button { position: absolute; z-index: 3; top: 10px; right: 10px; width: auto; margin: 0; padding: 2px 8px; background: #333; color: #ddd; font-size: 1.2rem; line-height: 1; }
+        .media-menu { position: absolute; z-index: 5; top: 44px; right: 10px; display: grid; min-width: 160px; padding: 4px; background: #292929; border: 1px solid #444; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+        .media-menu.hidden { display: none; }
+        .media-menu button { margin: 0; padding: 8px 10px; background: transparent; color: #fff; text-align: left; font-weight: normal; }
+        .media-menu button:hover, .media-menu button:focus { background: #3a3a3a; }
         .progress-track { height: 5px; margin-top: 10px; background: #333; border-radius: 5px; overflow: hidden; }
         .progress-fill { height: 100%; background: #3ecf8e; }
         .loading-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #333; border-top-color: #3ecf8e; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; }

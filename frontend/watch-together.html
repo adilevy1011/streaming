@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Watch Together | Adlv Media Stream</title>
+    <style>
+        :root { color-scheme: dark; }
+        body { margin: 0; padding: 24px; background: #121212; color: #fff; font-family: system-ui, sans-serif; }
+        .container { max-width: 1000px; margin: auto; }
+        .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+        button { padding: 10px 14px; border: 1px solid #333; border-radius: 8px; background: #3ecf8e; color: #000; font-weight: 700; cursor: pointer; }
+        button.secondary { background: #292929; color: #fff; }
+        button:disabled { opacity: .55; cursor: wait; }
+        .room-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 18px; margin-top: 18px; }
+        video { width: 100%; max-height: 70vh; background: #000; border-radius: 10px; }
+        .panel { padding: 16px; background: #1e1e1e; border: 1px solid #333; border-radius: 10px; }
+        .panel + .panel { margin-top: 12px; }
+        .link-row { display: flex; gap: 8px; }
+        input { min-width: 0; flex: 1; padding: 10px; background: #101010; color: #fff; border: 1px solid #444; border-radius: 7px; }
+        #status { min-height: 1.4em; color: #bbb; }
+        #participants { display: grid; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+        .person { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; background: #292929; border-radius: 7px; }
+        .person small { color: #aaa; }
+        .person button { padding: 4px 7px; background: #a33; color: #fff; font-size: .8rem; }
+        .notice { padding: 12px; margin-top: 12px; background: #292929; border-radius: 7px; color: #ddd; }
+        .modal { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.75); }
+        .modal.hidden { display: none; }
+        .modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; }
+        @media (max-width: 700px) { body { padding: 14px; } .room-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<main class="container">
+    <div class="top"><h1>Watch Together</h1><button class="secondary" onclick="location.href='/'">Back to library</button></div>
+    <p id="status">Connecting to room...</p>
+    <div class="room-grid">
+        <section><video id="room-video" controls playsinline preload="metadata"></video><div id="waiting" class="notice">Press “I’m ready” when you are ready. Playback begins when everyone in the room is ready.</div></section>
+        <aside>
+            <div class="panel"><h2>Share this room</h2><div class="link-row"><input id="room-link" readonly><button id="copy-link">Copy</button></div></div>
+            <div class="panel"><h2>People</h2><ul id="participants"></ul><button id="ready-button">I’m ready</button></div>
+        </aside>
+    </div>
+</main>
+<div id="removed-modal" class="modal hidden"><div class="modal-card"><h2>Removed from room</h2><p>You have been removed from this room.</p><button id="removed-ok">OK</button></div></div>
+<script src="api.js"></script>
+<script src="watch-together.js"></script>
+</body>
+</html>

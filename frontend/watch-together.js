@@ -34,6 +34,8 @@ let isScrubbing = false;
 let subtitleUrl = '';
 let previewManifest = null;
 let previewSpriteUrls = [];
+let serverClockOffsetMs = 0;
+let syncTimer = null;
 
 if (!roomId || !videoPath || !token) location.href = '/';
 else {
@@ -55,14 +57,25 @@ function connect() {
         if (message.type === 'participant') { participantId = message.participant_id; owner = message.owner === true; return; }
         if (message.type === 'participants') { renderParticipants(message.participants || []); return; }
         if (message.type === 'ping') { socket.send(JSON.stringify({ type: 'pong', client_received_ms: Date.now() })); return; }
+        if (message.type === 'clock') {
+            const clientReceived = Number(message.client_received_ms);
+            if (Number.isFinite(clientReceived) && Number.isFinite(Number(message.server_time_ms))) {
+                serverClockOffsetMs = Number(message.server_time_ms) - ((clientReceived + Date.now()) / 2);
+            }
+            return;
+        }
         if (message.type === 'kicked') { showRemoved(); return; }
         if (message.type === 'error') { statusElement.innerText = message.detail || 'Room error.'; return; }
         if (message.type === 'state') applyRoomState(message);
     };
     socket.onclose = event => {
+        if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
         if (event.code !== 4406) statusElement.innerText = 'The room connection was lost. Refresh to reconnect.';
         readyButton.disabled = true;
     };
+    syncTimer = setInterval(() => {
+        if (ready && started && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'sync' }));
+    }, 3000);
 }
 
 function renderParticipants(people) {
@@ -83,7 +96,8 @@ function renderParticipants(people) {
 }
 
 function applyRoomState(state) {
-    if (Number(state.revision) <= revision) return;
+    const isPeriodicSync = state.sync === true;
+    if (Number(state.revision) < revision || (Number(state.revision) === revision && !isPeriodicSync)) return;
     revision = Number(state.revision);
     if (state.media_path && state.media_path !== loadedVideoPath) {
         loadedVideoPath = state.media_path;
@@ -96,15 +110,26 @@ function applyRoomState(state) {
         ? (ready ? 'Playback is synchronized for everyone.' : 'You joined an active room. Press “I’m ready” to join playback.')
         : 'Press “I’m ready” when you are ready. Playback begins when everyone in the room is ready.';
     if (!ready || !started) { applyingRemote = true; player.pause(); applyingRemote = false; return; }
-    const elapsed = state.playing ? Math.max(0, Date.now() - Number(state.server_time_ms || Date.now())) / 1000 * Number(state.playback_rate || 1) : 0;
+    const elapsed = state.playing
+        ? Math.max(0, Date.now() + serverClockOffsetMs - Number(state.server_time_ms || Date.now())) / 1000 * Number(state.playback_rate || 1)
+        : 0;
     const target = Math.max(0, Number(state.position || 0) + elapsed);
     applyingRemote = true;
-    if (Number.isFinite(target) && Math.abs(player.currentTime - target) > 0.7) player.currentTime = target;
-    player.playbackRate = Number(state.playback_rate || 1);
+    const baseRate = Number(state.playback_rate || 1);
+    const drift = target - player.currentTime;
+    if (Number.isFinite(target) && (!state.playing || Math.abs(drift) > 0.8)) {
+        if (Math.abs(drift) > 0.12) player.currentTime = target;
+        player.playbackRate = baseRate;
+    } else if (state.playing && Math.abs(drift) > 0.08) {
+        const correction = Math.max(-0.08, Math.min(0.08, drift * 0.12));
+        player.playbackRate = baseRate * (1 + correction);
+    } else {
+        player.playbackRate = baseRate;
+    }
     playbackRate.value = String(state.playback_rate || 1);
     const result = state.playing ? player.play() : Promise.resolve(player.pause());
     Promise.resolve(result).catch(() => { statusElement.innerText = 'Tap the video once if your browser blocks playback.'; }).finally(() => { applyingRemote = false; });
-    statusElement.innerText = state.playing ? 'Playing together.' : 'Paused for everyone.';
+    if (!isPeriodicSync) statusElement.innerText = state.playing ? 'Playing together.' : 'Paused for everyone.';
 }
 
 function sendCommand(action, values = {}) {

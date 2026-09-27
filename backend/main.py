@@ -840,6 +840,13 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
                     "client_received_ms": message.get("client_received_ms"),
                 })
                 continue
+            if message.get("type") == "sync":
+                current_state = await get_room_state(room_id)
+                if current_state:
+                    sync_state = dict(current_state)
+                    sync_state["sync"] = True
+                    await websocket.send_json(sync_state)
+                continue
             if message.get("type") == "ready":
                 if await set_participant_ready(room_id, participant_id):
                     await publish_participants(room_id)

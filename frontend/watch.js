@@ -269,7 +269,7 @@ function sendRoomCommand(action, position = null, playbackRate = null) {
 
 function renderRoomParticipants(participants) {
     latestRoomParticipants = participants;
-    if (!roomIsOwner) return;
+    if (!roomIsOwner || !roomParticipants) return;
     roomParticipants.innerHTML = '';
     roomParticipants.classList.remove('hidden');
     participants.forEach(participant => {
@@ -375,15 +375,15 @@ async function createWatchRoom() {
         roomId = data.room_id;
         const url = new URL(window.location.href);
         url.searchParams.set('room', roomId);
-        roomLink.value = url.toString();
-        copyRoomLinkButton.disabled = false;
+        if (roomLink) roomLink.value = url.toString();
+        if (copyRoomLinkButton) copyRoomLinkButton.disabled = false;
         window.history.replaceState({}, '', url);
-        roomStatus.textContent = 'Room created';
+        if (roomStatus) roomStatus.textContent = 'Room created';
         latestRoomRevision = -1;
         seedRoomOnConnect = true;
         connectWatchRoom();
     } catch (error) {
-        roomStatus.textContent = error.message || 'Unable to create room';
+        if (roomStatus) roomStatus.textContent = error.message || 'Unable to create room';
     }
 }
 
@@ -692,8 +692,8 @@ async function startWatching() {
     document.title = `${videoName} | Adlv Media Stream`;
     if (roomId) {
         const url = new URL(window.location.href);
-        roomLink.value = url.toString();
-        copyRoomLinkButton.disabled = false;
+        if (roomLink) roomLink.value = url.toString();
+        if (copyRoomLinkButton) copyRoomLinkButton.disabled = false;
     }
     libraryButton.onclick = returnToLibrary;
     if (isTvShow(path) && !roomId) {
@@ -743,7 +743,7 @@ async function startWatching() {
         await saveCurrentProgress(true);
         if (!creditTimestampAvailable) {
             if (roomId) {
-                roomStatus.textContent = 'The watch room has reached the end of this video.';
+                if (roomStatus) roomStatus.textContent = 'The watch room has reached the end of this video.';
                 return;
             }
             await playNextEpisode(true);
@@ -881,8 +881,9 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => saveCurrentProgress(true));
 
-createRoomButton.addEventListener('click', createWatchRoom);
-copyRoomLinkButton.addEventListener('click', async () => {
+if (createRoomButton) createRoomButton.addEventListener('click', createWatchRoom);
+if (copyRoomLinkButton) copyRoomLinkButton.addEventListener('click', async () => {
+    if (!roomLink) return;
     if (!roomLink.value) return;
     try {
         await navigator.clipboard.writeText(roomLink.value);

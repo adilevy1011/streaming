@@ -31,6 +31,7 @@ const kickedModal = document.getElementById('room-kick-modal');
 const kickedModalOk = document.getElementById('room-kick-ok');
 const syncModal = document.getElementById('room-sync-modal');
 const syncModalOk = document.getElementById('room-sync-ok');
+const syncModalMessage = document.getElementById('room-sync-message');
 
 let currentUserId = '';
 let progressSaveTimer;
@@ -296,6 +297,8 @@ function returnToLibraryAfterKick() {
 function showSyncModal() {
     pendingRemotePlay = true;
     if (!syncModal) return;
+    const videoName = (path?.split('/').pop() || path || 'this video').replace(/\.[^.]+$/, '');
+    if (syncModalMessage) syncModalMessage.textContent = `This room is playing ${videoName}.`;
     syncModal.classList.remove('hidden');
     syncModalOk?.focus();
 }

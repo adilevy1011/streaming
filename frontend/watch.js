@@ -271,6 +271,17 @@ function sendRoomCommand(action, position = null, playbackRate = null) {
     }));
 }
 
+function toggleRoomPlayback() {
+    if (pendingRemotePlay && latestRoomState?.playing) {
+        enableSynchronizedPlayback();
+        return;
+    }
+    const currentlyPlaying = latestRoomState
+        ? latestRoomState.playing === true
+        : !player.paused;
+    sendRoomCommand(currentlyPlaying ? 'pause' : 'play');
+}
+
 function showKickedModal() {
     if (!kickedModal) {
         window.location.href = window.location.protocol === 'file:' ? 'index.html' : '/';
@@ -837,21 +848,13 @@ videoFrame.addEventListener('pointerleave', () => {
 });
 videoFrame.addEventListener('click', event => {
     if (event.target.closest('.timeline-shell, #completion-actions, #completion-message')) return;
-    if (roomId && pendingRemotePlay && latestRoomState?.playing) {
-        enableSynchronizedPlayback();
-        return;
-    }
-    if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
+    if (roomId) toggleRoomPlayback();
     else if (player.paused) player.play().catch(() => {});
     else player.pause();
 });
 
 playToggle.addEventListener('click', () => {
-    if (roomId && pendingRemotePlay && latestRoomState?.playing) {
-        enableSynchronizedPlayback();
-        return;
-    }
-    if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
+    if (roomId) toggleRoomPlayback();
     else if (player.paused) player.play().catch(() => {});
     else player.pause();
 });

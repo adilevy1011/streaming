@@ -44,13 +44,17 @@ SUPABASE_ANON_KEY=<YOUR_SUPABASE_ANON_KEY>
 ALLOWED_EMAILS=<you@example.com>
 MEDIA_BUCKET=media
 CORS_ORIGINS=https://<YOUR_DOMAIN>
+REDIS_URL=redis://localhost:6379/0
 ```
+
+Redis must be reachable from the backend. The production service uses two Uvicorn workers, so Redis is required for Watch Together room state. Keep Redis bound to a private interface and do not expose port 6379 to the public internet.
 
 For local development:
 
 ```env
 ALLOWED_EMAILS=owner@example.com,viewer@example.com
 CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
+REDIS_URL=redis://localhost:6379/0
 ```
 
 To allow every authenticated Supabase user with a non-blank email, set `ALLOWED_EMAILS=*` by itself. Treat this as a deliberate open-access mode: anyone who can create or use an account in the Supabase project will be able to access the media API. Do not use it for a private production deployment unless that is intentional.

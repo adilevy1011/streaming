@@ -1,17 +1,26 @@
 import os
 import json
+import time
+import uuid
+import asyncio
+from collections import deque
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 from urllib.parse import quote
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
+from starlette.concurrency import run_in_threadpool
+try:
+    import redis.asyncio as redis
+except ImportError:  # pragma: no cover - development environments may not have Redis installed yet
+    redis = None
 
 
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
@@ -30,6 +39,12 @@ ALLOW_ALL_EMAILS = ALLOWED_EMAILS == {"*"}
 MEDIA_BUCKET = os.environ["MEDIA_BUCKET"]
 CORS_ORIGINS = [origin.strip() for origin in os.environ["CORS_ORIGINS"].split(",") if origin.strip()]
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+ROOM_TTL_SECONDS = int(os.environ.get("WATCH_ROOM_TTL_SECONDS", "86400"))
+if ROOM_TTL_SECONDS <= 0:
+    raise RuntimeError("WATCH_ROOM_TTL_SECONDS must be greater than zero.")
+if REDIS_URL and redis is None:
+    raise RuntimeError("REDIS_URL is configured, but the redis package is not installed.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 app = FastAPI(title="adlv Media API")
@@ -68,6 +83,17 @@ class ProgressRequest(BaseModel):
     duration_seconds: float | None = Field(default=None, ge=0)
     completed: bool = False
     updated_at: str | None = None
+
+
+class WatchRoomRequest(BaseModel):
+    media_path: str = Field(min_length=1)
+
+
+class WatchCommand(BaseModel):
+    action: Literal["play", "pause", "seek", "rate"]
+    position: float | None = Field(default=None, ge=0)
+    playback_rate: float | None = Field(default=None, gt=0, le=4)
+    command_id: str | None = Field(default=None, max_length=128)
 
 
 class ProfileRequest(BaseModel):
@@ -383,6 +409,287 @@ def ensure_media_asset_access(token: str, asset_path: str) -> None:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
 
 
+# Watch-room state is deliberately separate from video_progress: it is a
+# short-lived, room-wide playback snapshot rather than a user's resume point.
+ROOM_STATE_PREFIX = "watch:room:"
+ROOM_CHANNEL_PREFIX = "watch:room:events:"
+ROOM_META_PREFIX = "watch:room:meta:"
+ROOM_BANS_PREFIX = "watch:room:bans:"
+ROOM_PARTICIPANTS_PREFIX = "watch:room:participants:"
+ROOM_STATE_SCRIPT = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return false end
+local state = cjson.decode(raw)
+local now = tonumber(ARGV[3])
+local position = tonumber(state.position) or 0
+if state.playing then
+  position = position + math.max(0, now - tonumber(state.server_time_ms or now)) / 1000 * tonumber(state.playback_rate or 1)
+end
+local action = ARGV[1]
+if action == 'seek' then
+  position = tonumber(ARGV[2])
+elseif action == 'play' then
+  state.playing = true
+elseif action == 'pause' then
+  state.playing = false
+elseif action == 'rate' then
+  state.playback_rate = tonumber(ARGV[7])
+else
+  return false
+end
+state.position = math.max(0, position)
+state.server_time_ms = now
+state.revision = tonumber(state.revision or 0) + 1
+state.action = action
+state.actor_id = ARGV[4]
+state.command_id = ARGV[5]
+local encoded = cjson.encode(state)
+redis.call('SET', KEYS[1], encoded, 'EX', ARGV[6])
+redis.call('PUBLISH', KEYS[2], encoded)
+return encoded
+"""
+
+room_connections: dict[str, set[WebSocket]] = {}
+room_states: dict[str, dict[str, Any]] = {}
+room_locks: dict[str, asyncio.Lock] = {}
+room_meta: dict[str, dict[str, Any]] = {}
+room_bans: dict[str, set[str]] = {}
+room_participants: dict[str, dict[str, dict[str, Any]]] = {}
+room_socket_info: dict[WebSocket, dict[str, str]] = {}
+redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
+
+
+@app.on_event("startup")
+async def verify_watch_room_store() -> None:
+    if redis_client:
+        await redis_client.ping()
+
+
+@app.on_event("shutdown")
+async def close_watch_room_store() -> None:
+    if redis_client:
+        await redis_client.aclose()
+
+
+def room_lock(room_id: str) -> asyncio.Lock:
+    return room_locks.setdefault(room_id, asyncio.Lock())
+
+
+def initial_room_state(room_id: str, media_path: str) -> dict[str, Any]:
+    now = int(time.time() * 1000)
+    return {
+        "type": "state", "room_id": room_id, "media_path": media_path,
+        "revision": 0, "action": "snapshot", "position": 0,
+        "playing": False, "playback_rate": 1, "server_time_ms": now,
+        "expires_at_ms": now + ROOM_TTL_SECONDS * 1000,
+        "actor_id": None, "command_id": None,
+    }
+
+
+async def get_room_state(room_id: str) -> dict[str, Any] | None:
+    if redis_client:
+        raw = await redis_client.get(f"{ROOM_STATE_PREFIX}{room_id}")
+        return json.loads(raw) if raw else None
+    state = room_states.get(room_id)
+    if state and state.get("expires_at_ms", 0) <= int(time.time() * 1000):
+        room_states.pop(room_id, None)
+        room_meta.pop(room_id, None)
+        room_bans.pop(room_id, None)
+        room_participants.pop(room_id, None)
+        return None
+    return state
+
+
+async def set_room_state(state: dict[str, Any]) -> None:
+    if redis_client:
+        await redis_client.set(f"{ROOM_STATE_PREFIX}{state['room_id']}", json.dumps(state), ex=ROOM_TTL_SECONDS)
+    else:
+        state["expires_at_ms"] = int(time.time() * 1000) + ROOM_TTL_SECONDS * 1000
+        room_states[state["room_id"]] = state
+
+
+async def get_room_meta(room_id: str) -> dict[str, Any] | None:
+    if redis_client:
+        raw = await redis_client.get(f"{ROOM_META_PREFIX}{room_id}")
+        return json.loads(raw) if raw else None
+    return room_meta.get(room_id)
+
+
+async def set_room_meta(room_id: str, meta: dict[str, Any]) -> None:
+    if redis_client:
+        await redis_client.set(f"{ROOM_META_PREFIX}{room_id}", json.dumps(meta), ex=ROOM_TTL_SECONDS)
+    else:
+        room_meta[room_id] = meta
+
+
+async def refresh_room_auxiliary_ttl(room_id: str) -> None:
+    if not redis_client:
+        return
+    await redis_client.expire(f"{ROOM_META_PREFIX}{room_id}", ROOM_TTL_SECONDS)
+    await redis_client.expire(f"{ROOM_BANS_PREFIX}{room_id}", ROOM_TTL_SECONDS)
+    await redis_client.expire(f"{ROOM_PARTICIPANTS_PREFIX}{room_id}", ROOM_TTL_SECONDS)
+
+
+async def is_room_banned(room_id: str, user_id: str) -> bool:
+    if redis_client:
+        return bool(await redis_client.sismember(f"{ROOM_BANS_PREFIX}{room_id}", user_id))
+    return user_id in room_bans.get(room_id, set())
+
+
+async def ban_room_user(room_id: str, user_id: str) -> None:
+    if redis_client:
+        key = f"{ROOM_BANS_PREFIX}{room_id}"
+        await redis_client.sadd(key, user_id)
+        await redis_client.expire(key, ROOM_TTL_SECONDS)
+    else:
+        room_bans.setdefault(room_id, set()).add(user_id)
+
+
+def participant_public_view(participant_id: str, participant: dict[str, Any]) -> dict[str, str]:
+    return {"participant_id": participant_id, "email": participant.get("email", "")}
+
+
+async def get_room_participants(room_id: str) -> dict[str, dict[str, Any]]:
+    if redis_client:
+        values = await redis_client.hgetall(f"{ROOM_PARTICIPANTS_PREFIX}{room_id}")
+        return {participant_id: json.loads(value) for participant_id, value in values.items()}
+    return dict(room_participants.get(room_id, {}))
+
+
+async def add_room_participant(room_id: str, participant_id: str, user: Any) -> None:
+    participant = {"user_id": user.id, "email": user.email or ""}
+    if redis_client:
+        key = f"{ROOM_PARTICIPANTS_PREFIX}{room_id}"
+        await redis_client.hset(key, participant_id, json.dumps(participant))
+        await redis_client.expire(key, ROOM_TTL_SECONDS)
+    else:
+        room_participants.setdefault(room_id, {})[participant_id] = participant
+
+
+async def remove_room_participant(room_id: str, participant_id: str) -> None:
+    if redis_client:
+        await redis_client.hdel(f"{ROOM_PARTICIPANTS_PREFIX}{room_id}", participant_id)
+    else:
+        room_participants.get(room_id, {}).pop(participant_id, None)
+
+
+async def publish_room(room_id: str, payload: dict[str, Any]) -> None:
+    if redis_client:
+        await redis_client.publish(f"{ROOM_CHANNEL_PREFIX}{room_id}", json.dumps(payload))
+        return
+    for websocket in list(room_connections.get(room_id, set())):
+        try:
+            info = room_socket_info.get(websocket, {})
+            if payload.get("type") == "participants" and payload.get("target_user_id") != info.get("user_id"):
+                continue
+            if payload.get("type") == "kick" and (
+                    payload.get("participant_id") != info.get("participant_id")
+                    and payload.get("target_user_id") != info.get("user_id")):
+                continue
+            outgoing = dict(payload)
+            outgoing.pop("target_user_id", None)
+            if outgoing.get("type") == "kick":
+                await websocket.send_json({"type": "kicked"})
+                await websocket.close(code=4406)
+                continue
+            await websocket.send_json(outgoing)
+        except Exception:
+            room_connections.get(room_id, set()).discard(websocket)
+
+
+async def publish_participants(room_id: str, owner_id: str) -> None:
+    participants = await get_room_participants(room_id)
+    await publish_room(room_id, {
+        "type": "participants",
+        "target_user_id": owner_id,
+        "participants": [participant_public_view(pid, value) for pid, value in participants.items()],
+    })
+
+
+async def apply_room_command(room_id: str, command: WatchCommand, user_id: str) -> dict[str, Any] | None:
+    now = int(time.time() * 1000)
+    if redis_client:
+        if command.action not in {"play", "pause", "seek", "rate"}:
+            return None
+        encoded = await redis_client.eval(
+            ROOM_STATE_SCRIPT, 2,
+            f"{ROOM_STATE_PREFIX}{room_id}", f"{ROOM_CHANNEL_PREFIX}{room_id}",
+            command.action, str(command.position if command.position is not None else 0),
+            str(now), user_id, command.command_id or str(uuid.uuid4()), str(ROOM_TTL_SECONDS),
+            str(command.playback_rate if command.playback_rate is not None else 1),
+        )
+        await refresh_room_auxiliary_ttl(room_id)
+        return json.loads(encoded) if encoded else None
+
+    async with room_lock(room_id):
+        state = await get_room_state(room_id)
+        if not state or command.action not in {"play", "pause", "seek", "rate"}:
+            return None
+        if state["playing"]:
+            state["position"] += max(0, now - state["server_time_ms"]) / 1000 * state.get("playback_rate", 1)
+        if command.action == "seek":
+            state["position"] = command.position or 0
+        elif command.action == "play":
+            state["playing"] = True
+        elif command.action == "pause":
+            state["playing"] = False
+        else:
+            if command.playback_rate is None:
+                return None
+            state["playback_rate"] = command.playback_rate
+        state.update({"revision": state["revision"] + 1, "action": command.action,
+                      "server_time_ms": now, "actor_id": user_id,
+                      "command_id": command.command_id or str(uuid.uuid4())})
+        await set_room_state(state)
+        await publish_room(room_id, state)
+        return state
+
+
+async def redis_room_listener(
+    room_id: str,
+    websocket: WebSocket,
+    ready: asyncio.Event,
+    participant_id: str,
+    user_id: str,
+) -> None:
+    pubsub = redis_client.pubsub()
+    try:
+        await pubsub.subscribe(f"{ROOM_CHANNEL_PREFIX}{room_id}")
+        ready.set()
+        async for message in pubsub.listen():
+            if message.get("type") == "message":
+                payload = json.loads(message["data"])
+                if payload.get("type") == "participants":
+                    if payload.get("target_user_id") != user_id:
+                        continue
+                    payload.pop("target_user_id", None)
+                elif payload.get("type") == "kick":
+                    if (payload.get("participant_id") != participant_id
+                            and payload.get("target_user_id") != user_id):
+                        continue
+                    await websocket.send_json({"type": "kicked"})
+                    await websocket.close(code=4406)
+                    return
+                await websocket.send_json(payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        ready.set()
+        await pubsub.unsubscribe(f"{ROOM_CHANNEL_PREFIX}{room_id}")
+        await pubsub.close()
+
+
+async def room_heartbeat(websocket: WebSocket) -> None:
+    while True:
+        await asyncio.sleep(20)
+        await websocket.send_json({"type": "ping", "server_time_ms": int(time.time() * 1000)})
+
+
 @app.get("/api/media/stream")
 def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
     safe_path = str(PurePosixPath("/" + path)).lstrip("/")
@@ -394,6 +701,194 @@ def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), 
 @app.get("/api/media/files")
 def files(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
     return list_files(token)
+
+
+@app.post("/api/watch/rooms")
+async def create_watch_room(
+    payload: WatchRoomRequest,
+    user: Any = Depends(current_user),
+    token: str = Depends(current_token),
+) -> dict[str, Any]:
+    await run_in_threadpool(ensure_video_access, token, payload.media_path)
+    room_id = str(uuid.uuid4())
+    state = initial_room_state(room_id, payload.media_path)
+    await set_room_state(state)
+    await set_room_meta(room_id, {"owner_id": user.id, "media_path": payload.media_path})
+    return {"room_id": room_id, "media_path": payload.media_path}
+
+
+@app.websocket("/api/watch/rooms/{room_id}")
+async def watch_room(websocket: WebSocket, room_id: str) -> None:
+    try:
+        uuid.UUID(room_id)
+    except ValueError:
+        await websocket.close(code=4404)
+        return
+    origin = websocket.headers.get("origin")
+    if origin and "*" not in CORS_ORIGINS and origin not in CORS_ORIGINS:
+        await websocket.close(code=4403)
+        return
+    await websocket.accept()
+    listener = None
+    heartbeat = None
+    try:
+        auth_text = await asyncio.wait_for(websocket.receive_text(), timeout=10)
+        if len(auth_text) > 4096:
+            await websocket.close(code=4400)
+            return
+        try:
+            auth_message = json.loads(auth_text)
+        except json.JSONDecodeError:
+            await websocket.close(code=4400)
+            return
+        if not isinstance(auth_message, dict):
+            await websocket.close(code=4400)
+            return
+        token = auth_message.get("token") if auth_message.get("type") == "auth" else None
+        if not token:
+            await websocket.close(code=4401)
+            return
+        user = await run_in_threadpool(current_user, token)
+        meta = await get_room_meta(room_id)
+        if not meta or await is_room_banned(room_id, user.id):
+            await websocket.send_json({"type": "error", "detail": "You are not allowed to join this watch room."})
+            await websocket.close(code=4406)
+            return
+        participant_id = str(uuid.uuid4())
+        is_owner = user.id == meta["owner_id"]
+        if redis_client:
+            listener_ready = asyncio.Event()
+            listener = asyncio.create_task(
+                redis_room_listener(room_id, websocket, listener_ready, participant_id, user.id)
+            )
+            await listener_ready.wait()
+        else:
+            state = await get_room_state(room_id)
+            if not state:
+                await websocket.send_json({"type": "error", "detail": "Watch room not found or expired."})
+                await websocket.close(code=4404)
+                return
+            room_connections.setdefault(room_id, set()).add(websocket)
+        # Read the state only after the Redis subscription is active. This
+        # prevents a joiner from missing a command between snapshot and subscribe.
+        state = await get_room_state(room_id)
+        if not state:
+            await websocket.send_json({"type": "error", "detail": "Watch room not found or expired."})
+            await websocket.close(code=4404)
+            return
+        await refresh_room_auxiliary_ttl(room_id)
+        await run_in_threadpool(ensure_video_access, token, state["media_path"])
+        await add_room_participant(room_id, participant_id, user)
+        if not redis_client:
+            room_socket_info[websocket] = {"participant_id": participant_id, "user_id": user.id}
+        await websocket.send_json({"type": "participant", "participant_id": participant_id, "owner": is_owner})
+        await publish_participants(room_id, meta["owner_id"])
+        await websocket.send_json(state)
+        heartbeat = asyncio.create_task(room_heartbeat(websocket))
+        command_times: deque[float] = deque()
+        seen_commands: deque[str] = deque(maxlen=128)
+        while True:
+            message_text = await websocket.receive_text()
+            if len(message_text) > 4096:
+                await websocket.send_json({"type": "error", "detail": "WebSocket message is too large."})
+                continue
+            try:
+                message = json.loads(message_text)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "detail": "Invalid JSON message."})
+                continue
+            if not isinstance(message, dict):
+                await websocket.send_json({"type": "error", "detail": "Message must be a JSON object."})
+                continue
+            if await is_room_banned(room_id, user.id):
+                await websocket.send_json({"type": "kicked"})
+                await websocket.close(code=4406)
+                return
+            if message.get("type") == "pong":
+                await websocket.send_json({
+                    "type": "clock", "server_time_ms": int(time.time() * 1000),
+                    "client_received_ms": message.get("client_received_ms"),
+                })
+                continue
+            if message.get("type") == "kick":
+                if not is_owner:
+                    await websocket.send_json({"type": "error", "detail": "Only the room creator can kick participants."})
+                    continue
+                target_id = message.get("participant_id")
+                if not isinstance(target_id, str) or len(target_id) > 128:
+                    await websocket.send_json({"type": "error", "detail": "Invalid participant."})
+                    continue
+                participants = await get_room_participants(room_id)
+                target = participants.get(target_id)
+                if not target or target.get("user_id") == user.id:
+                    await websocket.send_json({"type": "error", "detail": "Participant not found."})
+                    continue
+                await ban_room_user(room_id, target["user_id"])
+                await publish_room(room_id, {
+                    "type": "kick",
+                    "participant_id": target_id,
+                    "target_user_id": target["user_id"],
+                })
+                for participant_id, participant in participants.items():
+                    if participant.get("user_id") == target["user_id"]:
+                        await remove_room_participant(room_id, participant_id)
+                await publish_participants(room_id, meta["owner_id"])
+                continue
+            if message.get("type") != "command":
+                continue
+            now = time.monotonic()
+            while command_times and now - command_times[0] >= 1:
+                command_times.popleft()
+            if len(command_times) >= 30:
+                await websocket.send_json({"type": "error", "detail": "Too many commands; slow down."})
+                continue
+            command_times.append(now)
+            try:
+                command = WatchCommand.model_validate(message)
+            except Exception:
+                await websocket.send_json({"type": "error", "detail": "Invalid watch command."})
+                continue
+            if command.action == "seek" and command.position is None:
+                await websocket.send_json({"type": "error", "detail": "Seek commands require a position."})
+                continue
+            if command.action == "rate" and command.playback_rate is None:
+                await websocket.send_json({"type": "error", "detail": "Rate commands require a playback rate."})
+                continue
+            if command.command_id and command.command_id in seen_commands:
+                continue
+            if command.command_id:
+                seen_commands.append(command.command_id)
+            updated = await apply_room_command(room_id, command, user.id)
+            if updated is None:
+                await websocket.send_json({"type": "error", "detail": "Invalid watch command."})
+    except WebSocketDisconnect:
+        pass
+    except HTTPException as exc:
+        try:
+            await websocket.send_json({"type": "error", "detail": exc.detail})
+            await websocket.close(code=4404 if exc.status_code == 404 else 4403)
+        except Exception:
+            pass
+    except Exception:
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        if 'participant_id' in locals():
+            await remove_room_participant(room_id, participant_id)
+            room_socket_info.pop(websocket, None)
+            if 'meta' in locals() and meta:
+                await publish_participants(room_id, meta["owner_id"])
+        if heartbeat:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        if redis_client:
+            if listener:
+                listener.cancel()
+                await asyncio.gather(listener, return_exceptions=True)
+        else:
+            room_connections.get(room_id, set()).discard(websocket)
 
 
 @app.get("/api/media/subtitle")

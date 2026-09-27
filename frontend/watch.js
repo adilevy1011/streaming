@@ -1,6 +1,8 @@
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const PROGRESS_SAVE_INTERVAL = 2000;
-const path = new URLSearchParams(window.location.search).get('path');
+const query = new URLSearchParams(window.location.search);
+const path = query.get('path');
+let roomId = query.get('room');
 const player = document.getElementById('video-player');
 const timelineShell = document.getElementById('timeline-shell');
 const previewTimeline = document.getElementById('preview-timeline');
@@ -20,6 +22,11 @@ const completionMessage = document.getElementById('completion-message');
 const completionActions = document.getElementById('completion-actions');
 const libraryButton = document.getElementById('library-button');
 const creditsButton = document.getElementById('credits-button');
+const createRoomButton = document.getElementById('create-room');
+const roomLink = document.getElementById('room-link');
+const copyRoomLinkButton = document.getElementById('copy-room-link');
+const roomStatus = document.getElementById('watch-room-status');
+const roomParticipants = document.getElementById('watch-room-participants');
 
 let currentUserId = '';
 let progressSaveTimer;
@@ -36,6 +43,19 @@ let nextEpisodePath = null;
 let nextEpisodePrefetchStarted = false;
 let nextEpisodePreloader = null;
 let completionActionsDismissed = false;
+let roomSocket = null;
+let roomReconnectTimer = null;
+let latestRoomRevision = -1;
+let suppressLocalEventsUntil = 0;
+let pendingSeek = null;
+let seedRoomOnConnect = false;
+let serverClockOffsetMs = 0;
+let roomReconnectAttempt = 0;
+let roomConnectionGeneration = 0;
+let roomParticipantId = '';
+let roomIsOwner = false;
+let latestRoomParticipants = [];
+let latestRoomState = null;
 
 let controlsHideTimer = null;
 let isScrubbing = false;
@@ -187,6 +207,184 @@ function updatePlayerControls() {
     playToggle.setAttribute('aria-label', player.paused ? 'Play' : 'Pause');
     muteToggle.innerText = player.muted || player.volume === 0 ? '🔇' : '🔊';
     muteToggle.setAttribute('aria-label', player.muted ? 'Unmute' : 'Mute');
+}
+
+function roomSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/api/watch/rooms/${encodeURIComponent(roomId)}`;
+}
+
+function markRemoteApply() {
+    suppressLocalEventsUntil = performance.now() + 250;
+}
+
+function isRemoteApply() {
+    return performance.now() < suppressLocalEventsUntil;
+}
+
+function roomPosition(state) {
+    const elapsed = state.playing
+        ? Math.max(0, Date.now() + serverClockOffsetMs - Number(state.server_time_ms || Date.now())) / 1000 * Number(state.playback_rate || 1)
+        : 0;
+    return Math.max(0, Number(state.position || 0) + elapsed);
+}
+
+function applyRoomState(state) {
+    if (!state || state.media_path !== path || Number(state.revision) <= latestRoomRevision) return;
+    latestRoomRevision = Number(state.revision);
+    latestRoomState = state;
+    const apply = () => {
+        const target = roomPosition(state);
+        markRemoteApply();
+        if (Number.isFinite(target) && Math.abs(player.currentTime - target) > 0.35) {
+            player.currentTime = target;
+        }
+        if (Number.isFinite(Number(state.playback_rate))) {
+            player.playbackRate = Number(state.playback_rate);
+            playbackRate.value = String(state.playback_rate);
+        }
+        if (state.playing) {
+            player.play().catch(() => {
+                roomStatus.textContent = 'Click play once to allow synchronized playback.';
+            });
+        } else {
+            player.pause();
+        }
+        updatePlayerControls();
+    };
+    if (player.readyState >= 1) apply();
+    else player.addEventListener('loadedmetadata', apply, { once: true });
+}
+
+function sendRoomCommand(action, position = null, playbackRate = null) {
+    if (!roomSocket || roomSocket.readyState !== WebSocket.OPEN) {
+        roomStatus.textContent = 'Watch room is reconnecting…';
+        return;
+    }
+    roomSocket.send(JSON.stringify({
+        type: 'command', action, position, playback_rate: playbackRate,
+        command_id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+    }));
+}
+
+function renderRoomParticipants(participants) {
+    latestRoomParticipants = participants;
+    if (!roomIsOwner) return;
+    roomParticipants.innerHTML = '';
+    roomParticipants.classList.remove('hidden');
+    participants.forEach(participant => {
+        const item = document.createElement('span');
+        item.className = 'watch-room-participant';
+        item.textContent = participant.participant_id === roomParticipantId
+            ? `${participant.email || 'You'} (you)`
+            : (participant.email || 'Participant');
+        if (participant.participant_id !== roomParticipantId) {
+            const kick = document.createElement('button');
+            kick.type = 'button';
+            kick.textContent = 'Kick';
+            kick.addEventListener('click', () => {
+                if (roomSocket?.readyState === WebSocket.OPEN) {
+                    roomSocket.send(JSON.stringify({ type: 'kick', participant_id: participant.participant_id }));
+                }
+            });
+            item.appendChild(kick);
+        }
+        roomParticipants.appendChild(item);
+    });
+}
+
+function connectWatchRoom() {
+    if (!roomId) return;
+    if (roomSocket) roomSocket.close();
+    const generation = ++roomConnectionGeneration;
+    roomStatus.textContent = 'Connecting…';
+    roomSocket = new WebSocket(roomSocketUrl());
+    roomSocket.onopen = () => {
+        if (generation !== roomConnectionGeneration) return;
+        roomReconnectAttempt = 0;
+        roomSocket.send(JSON.stringify({ type: 'auth', token: getAccessToken() }));
+        if (seedRoomOnConnect) {
+            roomSocket.send(JSON.stringify({ type: 'command', action: 'seek', position: Math.max(0, player.currentTime || 0) }));
+            roomSocket.send(JSON.stringify({ type: 'command', action: player.paused ? 'pause' : 'play' }));
+            seedRoomOnConnect = false;
+        }
+        roomStatus.textContent = 'Connected';
+    };
+    roomSocket.onmessage = event => {
+        if (generation !== roomConnectionGeneration) return;
+        const message = JSON.parse(event.data);
+        if (message.type === 'ping') {
+            roomSocket.send(JSON.stringify({ type: 'pong', client_received_ms: Date.now() }));
+            return;
+        }
+        if (message.type === 'clock') {
+            const receivedAt = Date.now();
+            const clientReceivedAtPing = Number(message.client_received_ms);
+            if (Number.isFinite(clientReceivedAtPing)) {
+                const midpoint = clientReceivedAtPing + (receivedAt - clientReceivedAtPing) / 2;
+                serverClockOffsetMs = Number(message.server_time_ms) - midpoint;
+                if (latestRoomState?.playing && !isScrubbing && player.readyState >= 1) {
+                    const correctedPosition = roomPosition(latestRoomState);
+                    if (Math.abs(player.currentTime - correctedPosition) > 0.35) {
+                        markRemoteApply();
+                        player.currentTime = correctedPosition;
+                    }
+                }
+            }
+            return;
+        }
+        if (message.type === 'participant') {
+            roomParticipantId = message.participant_id || '';
+            roomIsOwner = message.owner === true;
+            if (roomIsOwner) renderRoomParticipants(latestRoomParticipants);
+            if (!roomIsOwner) roomParticipants.classList.add('hidden');
+            return;
+        }
+        if (message.type === 'participants') {
+            renderRoomParticipants(Array.isArray(message.participants) ? message.participants : []);
+            return;
+        }
+        if (message.type === 'kicked') {
+            roomStatus.textContent = 'You have been permanently removed from this watch room.';
+            return;
+        }
+        if (message.type === 'error') { roomStatus.textContent = message.detail || 'Room error'; return; }
+        applyRoomState(message);
+    };
+    roomSocket.onclose = event => {
+        if (generation !== roomConnectionGeneration) return;
+        if ([4401, 4403, 4404, 4406].includes(event.code)) {
+            roomStatus.textContent = event.code === 4406
+                ? 'You have been permanently removed from this watch room.'
+                : 'Unable to join this watch room.';
+            return;
+        }
+        roomStatus.textContent = 'Disconnected; retrying…';
+        clearTimeout(roomReconnectTimer);
+        const delay = Math.min(30000, 1000 * (2 ** Math.min(roomReconnectAttempt++, 5)));
+        roomReconnectTimer = setTimeout(connectWatchRoom, delay + Math.random() * 500);
+    };
+    roomSocket.onerror = () => {
+        if (generation === roomConnectionGeneration) roomSocket.close();
+    };
+}
+
+async function createWatchRoom() {
+    try {
+        const data = await apiRequest('/watch/rooms', { method: 'POST', body: JSON.stringify({ media_path: path }) });
+        roomId = data.room_id;
+        const url = new URL(window.location.href);
+        url.searchParams.set('room', roomId);
+        roomLink.value = url.toString();
+        copyRoomLinkButton.disabled = false;
+        window.history.replaceState({}, '', url);
+        roomStatus.textContent = 'Room created';
+        latestRoomRevision = -1;
+        seedRoomOnConnect = true;
+        connectWatchRoom();
+    } catch (error) {
+        roomStatus.textContent = error.message || 'Unable to create room';
+    }
 }
 
 function applySpriteFrame(timeSeconds) {
@@ -492,8 +690,13 @@ async function startWatching() {
     const videoName = (path.split('/').pop() || path).replace(/\.[^.]+$/, '');
     document.getElementById('now-playing').innerText = videoName;
     document.title = `${videoName} | Adlv Media Stream`;
+    if (roomId) {
+        const url = new URL(window.location.href);
+        roomLink.value = url.toString();
+        copyRoomLinkButton.disabled = false;
+    }
     libraryButton.onclick = returnToLibrary;
-    if (isTvShow(path)) {
+    if (isTvShow(path) && !roomId) {
         libraryButton.innerText = 'Next episode';
         libraryButton.classList.remove('back-button');
         libraryButton.onclick = playNextEpisode;
@@ -539,6 +742,10 @@ async function startWatching() {
     player.onended = async () => {
         await saveCurrentProgress(true);
         if (!creditTimestampAvailable) {
+            if (roomId) {
+                roomStatus.textContent = 'The watch room has reached the end of this video.';
+                return;
+            }
             await playNextEpisode(true);
             return;
         }
@@ -547,8 +754,12 @@ async function startWatching() {
 
     void attachMatchingSubtitle(path);
     await loadCredits(path);
-    void restorePosition();
-    player.play().catch(() => {});
+    if (roomId) {
+        connectWatchRoom();
+    } else {
+        void restorePosition();
+        player.play().catch(() => {});
+    }
 }
 
 function returnToLibrary() {
@@ -560,7 +771,7 @@ creditsButton.addEventListener('click', watchCredits);
 
 player.addEventListener('seeking', () => {
     updateCompletionActions();
-    saveCurrentProgress();
+    if (!isRemoteApply()) saveCurrentProgress();
 });
 player.addEventListener('contextmenu', event => event.preventDefault());
 
@@ -579,11 +790,16 @@ videoFrame.addEventListener('pointerleave', () => {
 });
 videoFrame.addEventListener('click', event => {
     if (event.target.closest('.timeline-shell, #completion-actions, #completion-message')) return;
-    if (player.paused) player.play().catch(() => {});
+    if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
+    else if (player.paused) player.play().catch(() => {});
     else player.pause();
 });
 
-playToggle.addEventListener('click', () => player.paused ? player.play() : player.pause());
+playToggle.addEventListener('click', () => {
+    if (roomId) sendRoomCommand(player.paused ? 'play' : 'pause');
+    else if (player.paused) player.play().catch(() => {});
+    else player.pause();
+});
 muteToggle.addEventListener('click', () => {
     player.muted = !player.muted;
     updatePlayerControls();
@@ -598,7 +814,11 @@ settingsToggle.addEventListener('click', event => {
     settingsMenu.classList.toggle('open');
     showPlayerControls();
 });
-playbackRate.addEventListener('change', () => { player.playbackRate = Number(playbackRate.value); });
+playbackRate.addEventListener('change', () => {
+    const rate = Number(playbackRate.value);
+    player.playbackRate = rate;
+    if (roomId) sendRoomCommand('rate', null, rate);
+});
 captionsToggle.addEventListener('change', () => {
     const enabled = captionsToggle.checked;
     [...player.textTracks].forEach(track => { track.mode = enabled ? 'showing' : 'disabled'; });
@@ -640,12 +860,15 @@ previewTimeline.addEventListener('pointerdown', () => { isScrubbing = true; });
 document.addEventListener('pointerup', () => {
     if (isScrubbing) {
         isScrubbing = false;
+        if (roomId && pendingSeek !== null) sendRoomCommand('seek', pendingSeek);
+        pendingSeek = null;
         showPlayerControls();
     }
 });
 
 previewTimeline.addEventListener('input', () => {
-    player.currentTime = Number(previewTimeline.value);
+    pendingSeek = Number(previewTimeline.value);
+    player.currentTime = pendingSeek;
     applySpriteFrame(player.currentTime);
     updatePlayerControls();
 });
@@ -657,5 +880,17 @@ document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') saveCurrentProgress(true);
 });
 window.addEventListener('pagehide', () => saveCurrentProgress(true));
+
+createRoomButton.addEventListener('click', createWatchRoom);
+copyRoomLinkButton.addEventListener('click', async () => {
+    if (!roomLink.value) return;
+    try {
+        await navigator.clipboard.writeText(roomLink.value);
+        roomStatus.textContent = 'Room link copied';
+    } catch (_) {
+        roomLink.select();
+        roomStatus.textContent = 'Copy the selected room link';
+    }
+});
 
 startWatching();

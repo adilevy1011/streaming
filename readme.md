@@ -4,6 +4,9 @@ A self-hosted media player built with a static frontend, a FastAPI backend, Supa
 
 The project combines a browser-based media library and player with a FastAPI backend and Supabase services for authentication, storage, and playback data. It can be run locally or deployed behind nginx with HTTPS.
 
+Watch Together uses authenticated WebSockets and Redis-backed room state. Set `REDIS_URL` in the backend environment when running more than one Uvicorn worker; without it, rooms use an in-process fallback intended only for local development. Nginx must forward WebSocket upgrade headers for `/api/`.
+
+
 ## Architecture
 
 ```text

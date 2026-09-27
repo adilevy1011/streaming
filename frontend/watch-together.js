@@ -167,7 +167,9 @@ fullscreenToggle.onclick = async () => {
     else if (player.webkitEnterFullscreen) player.webkitEnterFullscreen();
 };
 document.addEventListener('click', event => { if (!settingsMenu.contains(event.target) && event.target !== settingsToggle) settingsMenu.classList.remove('open'); });
-videoFrame.addEventListener('pointermove', () => { timelineShell.classList.add('controls-visible'); clearTimeout(videoFrame.controlsTimer); videoFrame.controlsTimer = setTimeout(() => { if (!player.paused) timelineShell.classList.remove('controls-visible'); }, 2500); });
+videoFrame.addEventListener('pointermove', revealControls);
+videoFrame.addEventListener('mousemove', revealControls);
+function revealControls() { timelineShell.classList.add('controls-visible'); clearTimeout(videoFrame.controlsTimer); videoFrame.controlsTimer = setTimeout(() => { if (!player.paused) timelineShell.classList.remove('controls-visible'); }, 2500); }
 async function loadSubtitles(path) {
     try {
         const result = await apiRequest(`/media/subtitle?video_path=${encodeURIComponent(path)}`);

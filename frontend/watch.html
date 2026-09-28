@@ -30,16 +30,19 @@
     <title>Watch | Adlv Media Stream</title>
     <style>
         :root { color-scheme: dark; }
-        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; margin: 0; padding: 24px; }
-        .container { max-width: 1000px; margin: 0 auto; }
+        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; margin: 0; padding: 0; overflow: hidden; }
+        .container { width: 100%; height: 100vh; }
         .hidden { display: none; }
         button { padding: 11px 13px; margin: 5px 0; box-sizing: border-box; border-radius: 8px; border: 1px solid #333; background: #3ecf8e; color: #000; font-weight: bold; cursor: pointer; }
         button:hover { filter: brightness(1.08); }
         .back-button { background: #1e1e1e; color: #fff; width: auto; border: 1px solid #333; }
-        .video-player-shell { margin-top: 15px; padding: 10px; background: #090909; border: 1px solid #292929; border-radius: 12px; box-shadow: 0 12px 30px rgba(0, 0, 0, .24); }
-        .video-frame { position: relative; overflow: hidden; border-radius: 8px; background: #000; }
+        .video-player-shell { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; border: 0; border-radius: 0; box-shadow: none; }
+        .video-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 0; background: #000; }
         .video-frame.user-idle { cursor: none; }
-        video { display: block; width: 100%; max-height: 78vh; background: #000; }
+        video { display: block; width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
+        .video-title { position: absolute; top: 16px; left: 64px; z-index: 11; max-width: calc(100% - 82px); padding: 9px 14px; overflow: hidden; color: #fff; font-size: 1.35rem; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; background: rgba(0, 0, 0, .68); border-radius: 7px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
+        .player-back-button { position: absolute; top: 16px; left: 18px; z-index: 12; display: grid; width: 38px; height: 38px; padding: 0; margin: 0; place-items: center; border: 0; border-radius: 7px; background: rgba(0, 0, 0, .68); color: #fff; font-size: 1.6rem; line-height: 1; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
+        .timeline-shell.controls-visible ~ .video-title, .video-frame.paused .video-title, .timeline-shell.controls-visible ~ .player-back-button, .video-frame.paused .player-back-button { opacity: 1; visibility: visible; pointer-events: auto; }
         
         .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
         .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
@@ -65,11 +68,7 @@
         .completion-actions button { min-width: 150px; }
         .completion-message { display: none !important; }
         @media (max-width: 600px) {
-            body { padding: 14px; }
-            .container { width: 100%; }
             .back-button { min-height: 42px; }
-            h1#now-playing { font-size: 1.35rem; line-height: 1.25; overflow-wrap: anywhere; }
-            .video-player-shell { padding: 5px; margin-top: 10px; }
             .timeline-shell { padding: 8px 8px 7px; }
             .player-controls { gap: 5px; flex-wrap: wrap; }
             .player-controls button { min-width: 34px; min-height: 34px; }
@@ -83,8 +82,6 @@
 </head>
 <body>
     <div class="container">
-        <button class="back-button" onclick="returnToLibrary()">← Back to library</button>
-        <h1 id="now-playing">Loading video…</h1>
         <div class="video-player-shell" aria-label="Video player">
             <div class="video-frame" id="video-frame">
                 <video id="video-player" controlslist="nodownload" preload="metadata" playsinline fetchpriority="high"></video>
@@ -110,6 +107,8 @@
                         <button id="fullscreen-toggle" type="button" aria-label="Fullscreen" title="Fullscreen">⛶</button>
                     </div>
                 </div>
+                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="returnToLibrary()">❮</button>
+                <div id="video-title" class="video-title" aria-live="polite"></div>
                 <p id="completion-message" class="completion-message hidden">This video is over.</p>
                 <div id="completion-actions" class="completion-actions hidden">
                     <button id="credits-button" type="button">Watch credits</button>

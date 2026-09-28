@@ -4,6 +4,7 @@ const videoPath = params.get('path');
 const token = getAccessToken();
 const player = document.getElementById('room-video');
 const videoFrame = document.getElementById('video-frame');
+const videoTitle = document.getElementById('video-title');
 const timelineShell = document.getElementById('timeline-shell');
 const timeline = document.getElementById('preview-timeline');
 const timelinePreview = document.getElementById('timeline-preview');
@@ -22,6 +23,9 @@ const waitingElement = document.getElementById('waiting');
 const readyButton = document.getElementById('ready-button');
 const participantsElement = document.getElementById('participants');
 const linkElement = document.getElementById('room-link');
+const roomGrid = document.querySelector('.room-grid');
+const roomSidebar = document.getElementById('room-sidebar');
+const sidebarToggle = document.getElementById('sidebar-toggle');
 let socket;
 let participantId = '';
 let owner = false;
@@ -36,6 +40,14 @@ let previewManifest = null;
 let previewSpriteUrls = [];
 let serverClockOffsetMs = 0;
 let syncTimer = null;
+
+roomSidebar.appendChild(waitingElement);
+sidebarToggle.onclick = () => {
+    const collapsed = roomGrid.classList.toggle('sidebar-collapsed');
+    sidebarToggle.innerText = collapsed ? '❮' : '❯';
+    sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand controls' : 'Collapse controls');
+    sidebarToggle.title = collapsed ? 'Expand controls' : 'Collapse controls';
+};
 
 if (!roomId || !videoPath || !token) location.href = '/';
 else {
@@ -101,6 +113,9 @@ function applyRoomState(state) {
     revision = Number(state.revision);
     if (state.media_path && state.media_path !== loadedVideoPath) {
         loadedVideoPath = state.media_path;
+        const videoName = (loadedVideoPath.split('/').pop() || loadedVideoPath).replace(/\.[^.]+$/, '');
+        videoTitle.innerText = videoName;
+        document.title = `${videoName} | Watch Together | Adlv Media Stream`;
         player.src = `/api/media/file/${loadedVideoPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`;
         loadSubtitles(loadedVideoPath);
         loadTimelinePreview(loadedVideoPath);
@@ -168,7 +183,7 @@ function attemptLocalPlayback() {
     if (player.paused) player.play().catch(() => {}); else player.pause();
 }
 playToggle.onclick = attemptLocalPlayback;
-videoFrame.onclick = event => { if (!event.target.closest('.timeline-shell')) attemptLocalPlayback(); };
+videoFrame.onclick = event => { if (!event.target.closest('.timeline-shell, .player-back-button')) attemptLocalPlayback(); };
 player.addEventListener('play', () => { updateControls(); sendCommand('play'); });
 player.addEventListener('pause', () => { updateControls(); sendCommand('pause'); });
 player.addEventListener('timeupdate', updateControls);

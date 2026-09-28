@@ -9,17 +9,22 @@
     <title>Watch Together | Adlv Media Stream</title>
     <style>
         :root { color-scheme: dark; }
-        body { margin: 0; padding: 24px; background: #121212; color: #fff; font-family: system-ui, sans-serif; }
-        .container { max-width: 1000px; margin: auto; }
-        .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+        body { margin: 0; padding: 0; background: #121212; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+        .container { width: 100%; height: 100vh; }
+        .top { position: absolute; top: 12px; left: 16px; z-index: 5; pointer-events: none; }
+        .top h1 { display: none; }
         button { padding: 10px 14px; border: 1px solid #333; border-radius: 8px; background: #3ecf8e; color: #000; font-weight: 700; cursor: pointer; }
         button.secondary { background: #292929; color: #fff; }
         button:disabled { opacity: .55; cursor: wait; }
-        .room-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 18px; margin-top: 18px; }
-        .video-player-shell { margin-top: 15px; padding: 10px; background: #090909; border: 1px solid #292929; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,.24); }
-        .video-frame { position: relative; overflow: hidden; border-radius: 8px; background: #000; }
+        .room-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); height: 100%; }
+        .room-grid > section { min-width: 0; min-height: 0; }
+        .video-player-shell { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; border: 0; border-radius: 0; box-shadow: none; }
+        .video-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 0; background: #000; }
         .video-frame.user-idle { cursor: none; }
-        video { display: block; width: 100%; max-height: 78vh; background: #000; }
+        video { display: block; width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
+        .video-title { position: absolute; top: 16px; left: 64px; z-index: 3; max-width: calc(100% - 82px); padding: 9px 14px; overflow: hidden; color: #fff; font-size: 1.35rem; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; background: rgba(0,0,0,.68); border-radius: 7px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
+        .player-back-button { position: absolute; top: 16px; left: 18px; z-index: 4; display: grid; width: 38px; height: 38px; padding: 0; margin: 0; place-items: center; border: 0; border-radius: 7px; background: rgba(0,0,0,.68); color: #fff; font-size: 1.6rem; line-height: 1; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
+        .timeline-shell.controls-visible ~ .video-title, .video-frame.paused .video-title, .timeline-shell.controls-visible ~ .player-back-button, .video-frame.paused .player-back-button { opacity: 1; visibility: visible; pointer-events: auto; }
         .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
         .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
         .timeline-shell { position: absolute; inset: auto 0 0; z-index: 2; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0,0,0,.9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
@@ -36,6 +41,12 @@
         .settings-menu.open { display: block; }
         .settings-menu label, .settings-menu select { display: block; width: 100%; margin: 4px 0; color: #fff; font-size: .85rem; }
         .settings-menu select { padding: 5px; background: #333; border: 1px solid #555; border-radius: 4px; }
+        .room-sidebar { position: relative; min-width: 0; padding: 58px 16px 16px; overflow: auto; background: #171717; border-left: 1px solid #333; transition: opacity .2s ease, padding .2s ease; }
+        .room-sidebar-toggle { position: absolute; top: 12px; left: -42px; z-index: 6; width: 34px; height: 34px; padding: 0; margin: 0; border: 1px solid #444; border-radius: 7px; background: rgba(20,20,20,.9); color: #fff; font-size: 1.1rem; }
+        .room-grid.sidebar-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
+        .room-grid.sidebar-collapsed .room-sidebar { padding-right: 0; padding-left: 0; background: transparent; border-left: 0; overflow: visible; pointer-events: none; }
+        .room-grid.sidebar-collapsed .room-sidebar > :not(.room-sidebar-toggle) { opacity: 0; visibility: hidden; }
+        .room-grid.sidebar-collapsed .room-sidebar-toggle { opacity: 1; pointer-events: auto; }
         .panel { padding: 16px; background: #1e1e1e; border: 1px solid #333; border-radius: 10px; }
         .panel + .panel { margin-top: 12px; }
         .link-row { display: flex; gap: 8px; }
@@ -49,13 +60,12 @@
         .modal { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.75); }
         .modal.hidden { display: none; }
         .modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; }
-        @media (max-width: 700px) { body { padding: 14px; } .room-grid { grid-template-columns: 1fr; } .video-player-shell { padding: 5px; } .timeline-shell { padding: 8px; } .player-controls { gap: 5px; flex-wrap: wrap; } .player-controls button { min-width: 34px; min-height: 34px; } .player-time { min-width: 0; flex: 1; font-size: .75rem; } .volume-control { width: 54px; } }
+        @media (max-width: 700px) { .room-grid { grid-template-columns: minmax(0, 1fr) minmax(220px, 78vw); } .timeline-shell { padding: 8px; } .player-controls { gap: 5px; flex-wrap: wrap; } .player-controls button { min-width: 34px; min-height: 34px; } .player-time { min-width: 0; flex: 1; font-size: .75rem; } .volume-control { width: 54px; } }
     </style>
 </head>
 <body>
 <main class="container">
-    <div class="top"><h1>Watch Together</h1><button class="secondary" onclick="location.href='/'">Back to library</button></div>
-    <p id="status">Connecting to room...</p>
+    <div class="top"><h1>Watch Together</h1></div>
     <div class="room-grid">
         <section>
             <div class="video-player-shell" aria-label="Video player"><div class="video-frame" id="video-frame">
@@ -72,10 +82,14 @@
                         </div></div><button id="fullscreen-toggle" type="button" aria-label="Fullscreen" title="Fullscreen">⛶</button>
                     </div>
                 </div>
+                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="location.href='/'">❮</button>
+                <div id="video-title" class="video-title" aria-live="polite"></div>
             </div></div>
             <div id="waiting" class="notice">Press “I’m ready” when you are ready. Playback begins when everyone in the room is ready.</div>
         </section>
-        <aside>
+        <aside class="room-sidebar" id="room-sidebar">
+            <button id="sidebar-toggle" class="room-sidebar-toggle" type="button" aria-label="Collapse controls" title="Collapse controls">❯</button>
+            <p id="status">Connecting to room...</p>
             <div class="panel"><h2>Share this room</h2><div class="link-row"><input id="room-link" readonly><button id="copy-link">Copy</button></div></div>
             <div class="panel"><h2>People</h2><ul id="participants"></ul><button id="ready-button">I’m ready</button></div>
         </aside>

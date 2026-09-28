@@ -8,6 +8,7 @@ const timelineShell = document.getElementById('timeline-shell');
 const previewTimeline = document.getElementById('preview-timeline');
 const timelinePreview = document.getElementById('timeline-preview');
 const videoFrame = document.getElementById('video-frame');
+const videoTitle = document.getElementById('video-title');
 const playToggle = document.getElementById('play-toggle');
 const playerTime = document.getElementById('player-time');
 const muteToggle = document.getElementById('mute-toggle');
@@ -157,7 +158,7 @@ async function saveProgress(position, duration, completed = false) {
         completed, updated_at: new Date().toISOString()
     };
     cacheProgress(payload.position_seconds, payload.duration_seconds, completed);
-    try { await apiRequest('/progress', { method: 'POST', body: JSON.stringify(payload) }); }
+    try { await apiRequest('/progress', { method: 'POST', body: JSON.stringify(payload), keepalive: true }); }
     catch (error) { console.warn('Unable to save playback progress', error); }
 }
 
@@ -780,7 +781,7 @@ async function startWatching() {
     currentUserId = session.user.id;
     await loadProfile();
     const videoName = (path.split('/').pop() || path).replace(/\.[^.]+$/, '');
-    document.getElementById('now-playing').innerText = videoName;
+    videoTitle.innerText = videoName;
     document.title = `${videoName} | Adlv Media Stream`;
     if (roomId) {
         const url = new URL(window.location.href);
@@ -856,7 +857,8 @@ async function startWatching() {
 
 function returnToLibrary() {
     const libraryPage = window.location.protocol === 'file:' ? 'index.html' : '/';
-    saveCurrentProgress(true).then(() => { window.location.href = libraryPage; });
+    void saveCurrentProgress(true);
+    window.location.href = libraryPage;
 }
 
 creditsButton.addEventListener('click', watchCredits);
@@ -881,7 +883,7 @@ videoFrame.addEventListener('pointerleave', () => {
     }
 });
 videoFrame.addEventListener('click', event => {
-    if (event.target.closest('.timeline-shell, #completion-actions, #completion-message')) return;
+    if (event.target.closest('.timeline-shell, .player-back-button, #completion-actions, #completion-message')) return;
     if (roomId) toggleRoomPlayback();
     else if (player.paused) player.play().catch(() => {});
     else player.pause();

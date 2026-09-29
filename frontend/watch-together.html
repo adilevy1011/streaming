@@ -33,7 +33,6 @@
     <link rel="stylesheet" href="styles/watch-together.css">
 </head>
 <body>
-<div class="orientation-lock" role="status" aria-live="polite"><div class="orientation-lock-content"><span class="orientation-lock-icon" aria-hidden="true">↔</span><h1>Rotate your device</h1><p>This player is designed for horizontal viewing.</p></div></div>
 <main class="container">
     <div class="room-grid">
         <section>
@@ -51,7 +50,7 @@
                         </div></div><button id="fullscreen-toggle" type="button" aria-label="Fullscreen" title="Fullscreen">⛶</button>
                     </div>
                 </div>
-                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="location.href='/'">❮</button>
+                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="event.stopPropagation(); location.href='/'">❮</button>
                 <div id="video-title" class="video-title" aria-live="polite"></div>
             </div></div>
             <div id="waiting" class="notice">Press “I’m ready” when you are ready. Playback begins when everyone in the room is ready.</div>

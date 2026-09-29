@@ -33,7 +33,6 @@
     <link rel="stylesheet" href="styles/watch.css">
 </head>
 <body>
-    <div class="orientation-lock" role="status" aria-live="polite"><div class="orientation-lock-content"><span class="orientation-lock-icon" aria-hidden="true">↔</span><h1>Rotate your device</h1><p>This player is designed for horizontal viewing.</p></div></div>
     <div class="container">
         <div class="video-player-shell" aria-label="Video player">
             <div class="video-frame" id="video-frame">
@@ -60,7 +59,7 @@
                         <button id="fullscreen-toggle" type="button" aria-label="Fullscreen" title="Fullscreen">⛶</button>
                     </div>
                 </div>
-                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="returnToLibrary()">❮</button>
+                <button class="player-back-button" type="button" aria-label="Back to library" title="Back to library" onclick="event.stopPropagation(); returnToLibrary()">❮</button>
                 <div id="video-title" class="video-title" aria-live="polite"></div>
                 <p id="completion-message" class="completion-message hidden">This video is over.</p>
                 <div id="completion-actions" class="completion-actions hidden">

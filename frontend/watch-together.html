@@ -59,6 +59,30 @@
         .modal.hidden { display: none; }
         .modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; }
         @media (max-width: 700px) { .room-grid { grid-template-columns: minmax(0, 1fr) minmax(220px, 78vw); } .timeline-shell { padding: 8px; } .player-controls { gap: 5px; flex-wrap: wrap; } .player-controls button { min-width: 34px; min-height: 34px; } .player-time { min-width: 0; flex: 1; font-size: .75rem; } .volume-control { width: 54px; } }
+        @media (max-width: 700px) {
+            .room-grid { display: block; position: relative; }
+            .room-grid > section { width: 100%; height: 100%; }
+            .room-sidebar { position: absolute; top: 0; right: 0; bottom: 0; width: min(86vw, 320px); box-sizing: border-box; z-index: 10; padding: 58px 12px 12px; }
+            .room-grid.sidebar-collapsed .room-sidebar { width: 0; padding-right: 0; padding-left: 0; }
+            .room-grid.sidebar-collapsed .room-sidebar-toggle { left: -42px; }
+            .timeline-shell { padding: 6px 8px; }
+            .player-controls { gap: 3px; }
+            .player-controls button { min-width: 30px; min-height: 30px; font-size: 1.1rem; }
+            .player-time { min-width: 76px; font-size: .7rem; }
+            .volume-control { width: 58px; }
+            .video-title { top: 10px; left: 54px; max-width: calc(100% - 64px); padding: 6px 9px; font-size: 1rem; }
+            .player-back-button { top: 10px; left: 10px; width: 34px; height: 34px; font-size: 1.35rem; }
+        }
+        @media (max-width: 700px) and (orientation: portrait) {
+            .player-controls { flex-wrap: wrap; }
+            .player-time { flex: 1 1 auto; }
+            .control-spacer { display: none; }
+        }
+        @media (max-width: 700px) and (orientation: landscape) {
+            .player-controls { flex-wrap: nowrap; }
+            .player-time { min-width: 82px; }
+            .timeline-shell { padding-bottom: 5px; }
+        }
     </style>
 </head>
 <body>

@@ -78,6 +78,25 @@
             .completion-actions { right: 10px; bottom: 62px; left: 10px; max-width: none; padding: 8px; }
             .completion-actions button { flex: 1 1 100%; min-width: 0; min-height: 40px; }
         }
+        @media (max-width: 700px) {
+            .video-title { top: 10px; left: 54px; max-width: calc(100% - 64px); padding: 6px 9px; font-size: 1rem; }
+            .player-back-button { top: 10px; left: 10px; width: 34px; height: 34px; font-size: 1.35rem; }
+            .timeline-shell { padding: 6px 8px; }
+            .player-controls { gap: 3px; }
+            .player-controls button { min-width: 30px; min-height: 30px; font-size: 1.1rem; }
+            .player-time { min-width: 76px; font-size: .7rem; }
+            .volume-control { width: 58px; }
+        }
+        @media (max-width: 700px) and (orientation: portrait) {
+            .player-controls { flex-wrap: wrap; }
+            .player-time { flex: 1 1 auto; }
+            .control-spacer { display: none; }
+        }
+        @media (max-width: 700px) and (orientation: landscape) {
+            .player-controls { flex-wrap: nowrap; }
+            .player-time { min-width: 82px; }
+            .timeline-shell { padding-bottom: 5px; }
+        }
     </style>
 </head>
 <body>

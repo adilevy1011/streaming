@@ -9,6 +9,11 @@ server {
     listen 443 ssl;
     server_name example.com;
 
+    # FastAPI trusts X-Real-IP because this backend is reachable only through nginx.
+    # Keep Uvicorn bound to 127.0.0.1 and do not expose port 8000 publicly.
+    client_max_body_size 2m;
+    add_header Referrer-Policy "no-referrer" always;
+
     ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;

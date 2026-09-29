@@ -6,14 +6,10 @@ The `scripts/generate_previews.py` worker creates timeline preview sprite sheets
 
 - Python 3.10 or newer.
 - `ffmpeg` and `ffprobe` available on `PATH`.
-- A configured `backend/.env` containing the Supabase URL, anon key, and bucket name.
+- A configured `backend/.env` containing the Supabase URL, service-role key, and bucket name.
 - The Supabase schema and storage policies applied with the setup instructions.
 
-When `SUPABASE_SERVICE_ROLE_KEY` is configured, the worker uses it for
-unattended trusted-job execution. If it is missing, the worker prompts for an
-application login through `/api/auth/login` and uses the authenticated user's
-access token with `SUPABASE_ANON_KEY` instead. Set `PREVIEW_API_URL` in `backend/.env` when the
-backend is not running at `http://127.0.0.1:8000`.
+The worker requires `SUPABASE_SERVICE_ROLE_KEY` for unattended trusted-job execution.
 
 For service-role mode, add:
 ```env
@@ -56,8 +52,7 @@ mp4, m4v, webm, mov, mkv, avi, ogv, mpeg, mpg, ts
 ## Troubleshooting
 
 - If the worker cannot start, verify that both `ffmpeg` and `ffprobe` are installed and available on `PATH`.
-- If Supabase requests fail, verify `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `MEDIA_BUCKET` in `backend/.env`.
-- If login fails, verify the backend is running at `PREVIEW_API_URL` and that the account is in `ALLOWED_EMAILS`.
+- If Supabase requests fail, verify `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `MEDIA_BUCKET` in `backend/.env`.
 - If a video is skipped, confirm that its extension is supported and that the worker can read the `media` bucket.
 - Use `--force` only when existing previews need to be rebuilt.
 

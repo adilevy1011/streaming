@@ -31,6 +31,7 @@ Supabase project
 - [Setup and deployment](docs/setup.md)
 - [How to use](docs/how_to_use.md)
 - [Database Architecture](docs/database_architecture.md)
+- [Security](docs/security.md)
 - [Scripts](docs/scripts.md)
 
 ## Repository layout

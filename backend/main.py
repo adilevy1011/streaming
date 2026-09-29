@@ -6,6 +6,7 @@ import tempfile
 import time
 import uuid
 import asyncio
+import re
 from collections import deque
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -44,6 +45,17 @@ CORS_ORIGINS = [origin.strip() for origin in os.environ["CORS_ORIGINS"].split(",
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 ROOM_TTL_SECONDS = int(os.environ.get("WATCH_ROOM_TTL_SECONDS", "86400"))
+API_RATE_LIMIT = int(os.environ.get("API_RATE_LIMIT", "120"))
+API_RATE_WINDOW_SECONDS = int(os.environ.get("API_RATE_WINDOW_SECONDS", "60"))
+LOGIN_RATE_LIMIT = int(os.environ.get("LOGIN_RATE_LIMIT", "5"))
+LOGIN_RATE_WINDOW_SECONDS = int(os.environ.get("LOGIN_RATE_WINDOW_SECONDS", "60"))
+MAX_API_BODY_BYTES = int(os.environ.get("MAX_API_BODY_BYTES", str(2 * 1024 * 1024)))
+if API_RATE_LIMIT <= 0 or API_RATE_WINDOW_SECONDS <= 0:
+    raise RuntimeError("API_RATE_LIMIT and API_RATE_WINDOW_SECONDS must be greater than zero.")
+if LOGIN_RATE_LIMIT <= 0 or LOGIN_RATE_WINDOW_SECONDS <= 0:
+    raise RuntimeError("LOGIN_RATE_LIMIT and LOGIN_RATE_WINDOW_SECONDS must be greater than zero.")
+if MAX_API_BODY_BYTES <= 0:
+    raise RuntimeError("MAX_API_BODY_BYTES must be greater than zero.")
 if ROOM_TTL_SECONDS <= 0:
     raise RuntimeError("WATCH_ROOM_TTL_SECONDS must be greater than zero.")
 if REDIS_URL and redis is None:
@@ -61,6 +73,119 @@ app.add_middleware(
 )
 
 
+class RateLimiter:
+    """A small fixed-window limiter, shared through Redis when configured."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._windows: dict[str, tuple[int, int]] = {}
+
+    async def check(self, key: str, limit: int, window_seconds: int) -> int | None:
+        now = int(time.time())
+        window = now // window_seconds
+        redis_key = f"rate-limit:{key}:{window}"
+        if redis_client:
+            count = await redis_client.incr(redis_key)
+            if count == 1:
+                await redis_client.expire(redis_key, window_seconds + 1)
+            if count > limit:
+                return window_seconds - (now % window_seconds)
+            return None
+
+        async with self._lock:
+            previous_window, count = self._windows.get(key, (window, 0))
+            if previous_window != window:
+                count = 0
+            count += 1
+            self._windows[key] = (window, count)
+            if count > limit:
+                return window_seconds - (now % window_seconds)
+        return None
+
+
+rate_limiter = RateLimiter()
+
+
+def request_client_key(request: Request) -> str:
+    # nginx sets X-Real-IP before forwarding requests. Fall back to the direct
+    # peer for local development and deployments without a reverse proxy.
+    return (request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")).strip()
+
+
+def validate_text(value: str, field: str, max_length: int) -> str:
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
+    return value
+
+
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def validate_email(value: str) -> str:
+    value = validate_text(value, "email", 320).strip().casefold()
+    if not EMAIL_PATTERN.fullmatch(value):
+        raise HTTPException(status_code=400, detail="Invalid email.")
+    return value
+
+
+def validate_media_path(value: str) -> str:
+    value = validate_text(value, "media path", 1024)
+    normalized = str(PurePosixPath("/" + value)).lstrip("/")
+    if (
+        not normalized
+        or normalized.startswith("..")
+        or "\\" in value
+        or any(part in {".", ".."} for part in value.split("/"))
+    ):
+        raise HTTPException(status_code=400, detail="Invalid media path.")
+    # These characters have special meaning in PostgREST filter expressions.
+    if any(character in value for character in "'\"(),{}"):
+        raise HTTPException(status_code=400, detail="Invalid media path.")
+    return normalized
+
+
+def validate_uuid(value: str, field: str = "identifier") -> str:
+    value = validate_text(value, field, 36)
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}.") from exc
+
+
+def rate_limit_bucket(path: str) -> tuple[str, int, int]:
+    if path == "/api/auth/login":
+        return "login", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS
+    return "api", API_RATE_LIMIT, API_RATE_WINDOW_SECONDS
+
+
+@app.middleware("http")
+async def rate_limit_api_requests(request: Request, call_next: Any) -> Response:
+    if request.url.path.startswith("/api/"):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_API_BODY_BYTES:
+                    return Response(status_code=413, content="Request body is too large.")
+            except ValueError:
+                return Response(status_code=400, content="Invalid Content-Length header.")
+        if len(request.url.query) > 4096:
+            return Response(status_code=400, content="Request query is too long.")
+        bucket, limit, window_seconds = rate_limit_bucket(request.url.path)
+        retry_after = await rate_limiter.check(
+            f"{bucket}:{request_client_key(request)}", limit, window_seconds
+        )
+        if retry_after is not None:
+            return Response(
+                content=json.dumps({"detail": "Too many requests; please try again later."}),
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                media_type="application/json",
+                headers={"Retry-After": str(retry_after)},
+            )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def prevent_stale_api_responses(request: Request, call_next: Any) -> Response:
     response = await call_next(request)
@@ -72,16 +197,16 @@ async def prevent_stale_api_responses(request: Request, call_next: Any) -> Respo
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(min_length=1, max_length=4096)
 
 
 class ProgressRequest(BaseModel):
-    media_path: str = Field(min_length=1)
+    media_path: str = Field(min_length=1, max_length=1024)
     position_seconds: float = Field(ge=0)
     duration_seconds: float | None = Field(default=None, ge=0)
     completed: bool = False
@@ -89,7 +214,7 @@ class ProgressRequest(BaseModel):
 
 
 class WatchRoomRequest(BaseModel):
-    media_path: str = Field(min_length=1)
+    media_path: str = Field(min_length=1, max_length=1024)
 
 
 class WatchCommand(BaseModel):
@@ -104,7 +229,7 @@ class ProfileRequest(BaseModel):
 
 
 class AdminVideoAccessRequest(BaseModel):
-    user_access: list[str]
+    user_access: list[str] = Field(max_length=500)
 
 
 class AdminNewVideosAccessRequest(BaseModel):
@@ -112,7 +237,7 @@ class AdminNewVideosAccessRequest(BaseModel):
 
 
 def reject_unallowed(email: str) -> None:
-    normalized_email = email.strip().casefold()
+    normalized_email = validate_email(email)
     if not normalized_email:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is not allowed.")
     if ALLOW_ALL_EMAILS:
@@ -138,12 +263,12 @@ def session_response(session: Any) -> dict[str, Any]:
 def bearer_token(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Authentication required.")
-    return authorization[7:].strip()
+    return validate_text(authorization[7:].strip(), "access token", 4096)
 
 
 def current_token(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> str:
     token = token or bearer_token(authorization)
-    return token
+    return validate_text(token, "access token", 4096)
 
 
 def current_user(token: str = Depends(current_token)) -> Any:
@@ -181,9 +306,25 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginRequest) -> dict[str, Any]:
+async def login(payload: LoginRequest) -> dict[str, Any]:
+    # Reject disallowed addresses before invoking Supabase Auth. This keeps
+    # unapproved login attempts out of the upstream auth service entirely.
+    email = validate_email(payload.email)
+    reject_unallowed(email)
+    retry_after = await rate_limiter.check(
+        f"login-email:{email}", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts; please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
     try:
-        session = supabase.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
+        session = await run_in_threadpool(
+            supabase.auth.sign_in_with_password,
+            {"email": email, "password": payload.password},
+        )
         return session_response(session)
     except HTTPException:
         raise
@@ -750,9 +891,7 @@ async def room_heartbeat(websocket: WebSocket) -> None:
 
 @app.get("/api/media/stream")
 def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
-    safe_path = str(PurePosixPath("/" + path)).lstrip("/")
-    if path and (not safe_path or safe_path.startswith("..")):
-        raise HTTPException(status_code=400, detail="Invalid media path.")
+    safe_path = validate_media_path(path) if path else ""
     return StreamingResponse(stream_videos(token, safe_path), media_type="application/x-ndjson")
 
 
@@ -767,16 +906,24 @@ async def create_watch_room(
     user: Any = Depends(current_user),
     token: str = Depends(current_token),
 ) -> dict[str, Any]:
-    await run_in_threadpool(ensure_video_access, token, payload.media_path)
+    media_path = validate_media_path(payload.media_path)
+    await run_in_threadpool(ensure_video_access, token, media_path)
     room_id = str(uuid.uuid4())
-    state = initial_room_state(room_id, payload.media_path)
+    state = initial_room_state(room_id, media_path)
     await set_room_state(state)
-    await set_room_meta(room_id, {"owner_id": user.id, "media_path": payload.media_path})
-    return {"room_id": room_id, "media_path": payload.media_path}
+    await set_room_meta(room_id, {"owner_id": user.id, "media_path": media_path})
+    return {"room_id": room_id, "media_path": media_path}
 
 
 @app.websocket("/api/watch/rooms/{room_id}")
 async def watch_room(websocket: WebSocket, room_id: str) -> None:
+    client_ip = (websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")).strip()
+    retry_after = await rate_limiter.check(
+        f"api:{client_ip}", API_RATE_LIMIT, API_RATE_WINDOW_SECONDS
+    )
+    if retry_after is not None:
+        await websocket.close(code=4429, reason="Too many requests; please try again later.")
+        return
     try:
         uuid.UUID(room_id)
     except ValueError:
@@ -976,6 +1123,7 @@ async def watch_room(websocket: WebSocket, room_id: str) -> None:
 
 @app.get("/api/media/subtitle")
 def subtitle(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, str]:
+    video_path = validate_media_path(video_path)
     ensure_video_access(token, video_path)
     return {"path": matching_subtitle(token, video_path)}
 
@@ -987,9 +1135,7 @@ async def embedded_subtitle(
     token: str = Depends(current_token),
 ) -> Response:
     """Return the first subtitle stream stored inside a video container as WebVTT."""
-    safe_path = str(PurePosixPath("/" + video_path)).lstrip("/")
-    if not safe_path or safe_path.startswith(".."):
-        raise HTTPException(status_code=400, detail="Invalid media path.")
+    safe_path = validate_media_path(video_path)
     ensure_video_access(token, safe_path)
 
     media_url = f"{SUPABASE_URL}/storage/v1/object/{MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
@@ -1023,6 +1169,7 @@ async def embedded_subtitle(
 
 @app.get("/api/media/credits")
 def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    video_path = validate_media_path(video_path)
     ensure_video_access(token, video_path)
     data = supabase_request(
         "GET",
@@ -1062,6 +1209,7 @@ def update_admin_user_access(
     user_id: str = Query(..., min_length=1),
     token: str = Depends(admin_token),
 ) -> dict[str, Any]:
+    user_id = validate_uuid(user_id, "user id")
     try:
         data = supabase_request(
             "POST",
@@ -1114,7 +1262,10 @@ def update_admin_video_access(
     path: str = Query(..., min_length=1),
     token: str = Depends(admin_token),
 ) -> dict[str, Any]:
+    path = validate_media_path(path)
     emails = sorted({email.strip().casefold() for email in payload.user_access if email.strip()})
+    if any(not EMAIL_PATTERN.fullmatch(validate_text(email, "email", 320)) for email in emails):
+        raise HTTPException(status_code=400, detail="Invalid email in user access list.")
     data = supabase_request(
         "PATCH",
         "/rest/v1/videos",
@@ -1136,6 +1287,7 @@ def progress(user: Any = Depends(current_user), token: str = Depends(current_tok
 
 @app.post("/api/progress")
 def save_progress(payload: ProgressRequest, user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
+    payload.media_path = validate_media_path(payload.media_path)
     row = payload.model_dump(exclude_none=True)
     row["user_id"] = user.id
     data = supabase_request(
@@ -1155,6 +1307,7 @@ def delete_progress(
     user: Any = Depends(current_user),
     token: str = Depends(current_token),
 ) -> Response:
+    media_path = validate_media_path(media_path)
     supabase_request(
         "DELETE",
         "/rest/v1/video_progress",
@@ -1175,9 +1328,7 @@ async def upstream_stream(url: str, headers: dict[str, str]) -> AsyncIterator[by
 
 @app.get("/api/media/file/{media_path:path}")
 async def media_file(media_path: str, request: Request, _: Any = Depends(current_user), token: str = Depends(current_token)) -> Response:
-    safe_path = str(PurePosixPath("/" + media_path)).lstrip("/")
-    if not safe_path or safe_path.startswith(".."):
-        raise HTTPException(status_code=400, detail="Invalid media path.")
+    safe_path = validate_media_path(media_path)
     ensure_media_asset_access(token, safe_path)
     media_url = f"{SUPABASE_URL}/storage/v1/object/{MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
     range_header = request.headers.get("range")

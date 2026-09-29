@@ -49,12 +49,21 @@ REDIS_URL=redis://localhost:6379/0
 
 Redis must be reachable from the backend. The production service uses two Uvicorn workers, so Redis is required for Watch Together room state. Keep Redis bound to a private interface and do not expose port 6379 to the public internet.
 
+The backend is intended to be reachable only through nginx on `127.0.0.1:8000`; it trusts nginx's `X-Real-IP` header for rate limiting. Do not expose the Uvicorn port publicly.
+
 For local development:
 
 ```env
 ALLOWED_EMAILS=owner@example.com,viewer@example.com
 CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
 REDIS_URL=redis://localhost:6379/0
+
+# Optional API rate-limit overrides (these are the defaults)
+API_RATE_LIMIT=120
+API_RATE_WINDOW_SECONDS=60
+LOGIN_RATE_LIMIT=5
+LOGIN_RATE_WINDOW_SECONDS=60
+MAX_API_BODY_BYTES=2097152
 ```
 
 To allow every authenticated Supabase user with a non-blank email, set `ALLOWED_EMAILS=*` by itself. Treat this as a deliberate open-access mode: anyone who can create or use an account in the Supabase project will be able to access the media API. Do not use it for a private production deployment unless that is intentional.

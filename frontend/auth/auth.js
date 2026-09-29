@@ -11,6 +11,19 @@ function redirectToLogin() {
     window.location.replace(loginPageUrl());
 }
 
+function loginErrorMessage(error) {
+    if (error?.status === 403) {
+        return 'Your email is not in the allowed email list.';
+    }
+    if (error?.status === 429) {
+        return 'Too many login attempts. Please wait a moment and try again.';
+    }
+    if (error?.status === 401) {
+        return 'Invalid email or password.';
+    }
+    return 'Unable to log in right now. Please try again.';
+}
+
 async function requireAuthenticatedSession() {
     const session = await getAuthenticatedSession();
     if (!session) {
@@ -34,7 +47,7 @@ async function handleLogin(event) {
         await loginWithApi(email, password);
         window.location.replace(appHomeUrl());
     } catch (error) {
-        errorElement.textContent = error.message || 'Unable to log in.';
+        errorElement.textContent = loginErrorMessage(error);
         button.disabled = false;
         button.textContent = 'Log In';
     }

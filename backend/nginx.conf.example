@@ -40,6 +40,17 @@ server {
         add_header Pragma "no-cache" always;
     }
 
+    location = /login {
+        try_files /auth/login.html =404;
+    }
+
+    location = /auth.js {
+        try_files /auth/auth.js =404;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+    }
+
     location ~* \.(?:html|js)$ {
         try_files $uri =404;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;

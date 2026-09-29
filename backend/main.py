@@ -1220,4 +1220,14 @@ def frontend_watch_together() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "watch-together.html")
 
 
+@app.get("/login", include_in_schema=False)
+def frontend_login() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "auth" / "login.html")
+
+
+@app.get("/auth.js", include_in_schema=False)
+def frontend_auth_script() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "auth" / "auth.js")
+
+
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend")

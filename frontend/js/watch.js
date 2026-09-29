@@ -75,6 +75,12 @@ let playbackUnlocked = false;
 
 let controlsHideTimer = null;
 let isScrubbing = false;
+let desktopFullscreenApi = window.pywebview?.api || null;
+
+window.addEventListener('pywebviewready', () => {
+    desktopFullscreenApi = window.pywebview?.api || null;
+    window.pywebview?.api?.desktop_log?.('watch player bridge ready');
+});
 
 completionMessage.classList.add('hidden');
 completionActions.classList.add('hidden');
@@ -926,6 +932,15 @@ captionsToggle.addEventListener('change', () => {
 });
 fullscreenToggle.addEventListener('click', async () => {
     requestLandscapeOrientation();
+    const liveDesktopApi = window.pywebview?.api || desktopFullscreenApi;
+    liveDesktopApi?.desktop_log?.(`fullscreen clicked; api=${!!liveDesktopApi}`);
+    const desktopToggleFullscreen = liveDesktopApi?.toggle_fullscreen
+        || liveDesktopApi?.toggleFullscreen;
+    if (desktopToggleFullscreen) {
+        await desktopToggleFullscreen.call(liveDesktopApi);
+        return;
+    }
+    console.warn('[ADLV desktop] native fullscreen bridge is unavailable; using browser fullscreen fallback');
     if (document.fullscreenElement || document.webkitFullscreenElement) {
         await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
         return;

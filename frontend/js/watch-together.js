@@ -48,6 +48,12 @@ let previewManifest = null;
 let previewSpriteUrls = [];
 let serverClockOffsetMs = 0;
 let syncTimer = null;
+let desktopFullscreenApi = window.pywebview?.api || null;
+
+window.addEventListener('pywebviewready', () => {
+    desktopFullscreenApi = window.pywebview?.api || null;
+    window.pywebview?.api?.desktop_log?.('watch-together player bridge ready');
+});
 
 roomSidebar.appendChild(waitingElement);
 sidebarToggle.onclick = () => {
@@ -220,6 +226,15 @@ playbackRate.onchange = () => { player.playbackRate = Number(playbackRate.value)
 captionsToggle.onchange = () => { [...player.textTracks].forEach(track => { track.mode = captionsToggle.checked ? 'showing' : 'disabled'; }); };
 fullscreenToggle.onclick = async () => {
     requestLandscapeOrientation();
+    const liveDesktopApi = window.pywebview?.api || desktopFullscreenApi;
+    liveDesktopApi?.desktop_log?.(`fullscreen clicked; api=${!!liveDesktopApi}`);
+    const desktopToggleFullscreen = liveDesktopApi?.toggle_fullscreen
+        || liveDesktopApi?.toggleFullscreen;
+    if (desktopToggleFullscreen) {
+        await desktopToggleFullscreen.call(liveDesktopApi);
+        return;
+    }
+    console.warn('[ADLV desktop] native fullscreen bridge is unavailable; using browser fullscreen fallback');
     if (document.fullscreenElement) return document.exitFullscreen();
     if (videoFrame.requestFullscreen) await videoFrame.requestFullscreen();
     else if (player.webkitEnterFullscreen) player.webkitEnterFullscreen();

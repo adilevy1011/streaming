@@ -27,16 +27,9 @@ let adminFolderStateInitialized = false;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 
-async function login() {
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    try { await loginWithApi(email, password); checkAuth(); }
-    catch (error) { document.getElementById('auth-error').innerText = error.message; }
-}
-
 async function logout() {
     logoutFromApi();
-    checkAuth();
+    redirectToLogin();
 }
 
 async function refreshLibrary() {
@@ -111,13 +104,16 @@ function setRefreshState(loading) {
 
 async function checkAuth() {
     const session = await getAuthenticatedSession();
+    if (!session) {
+        redirectToLogin();
+        return null;
+    }
     currentUserId = session?.user?.id || '';
     adminAccess = false;
     if (session) {
         try { adminAccess = !!(await apiRequest('/profile')).admin_access; }
         catch (error) { console.warn('Unable to load profile access', error); }
     }
-    document.getElementById('auth-section').classList.toggle('hidden', !!session);
     document.getElementById('stream-section').classList.toggle('hidden', !session);
     document.getElementById('logout-button').classList.toggle('hidden', !session);
     document.getElementById('refresh-library-button').classList.toggle('hidden', !session);
@@ -126,6 +122,7 @@ async function checkAuth() {
         showLibrary('my-library');
         loadMedia();
     }
+    return session;
 }
 
 async function showAdminActions() {

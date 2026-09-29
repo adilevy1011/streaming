@@ -1,7 +1,7 @@
 const params = new URLSearchParams(location.search);
 const roomId = params.get('room');
 const videoPath = params.get('path');
-const token = getAccessToken();
+let token = '';
 
 function requestLandscapeOrientation() {
     if (!/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)) return;
@@ -57,11 +57,19 @@ sidebarToggle.onclick = () => {
     sidebarToggle.title = collapsed ? 'Expand controls' : 'Collapse controls';
 };
 
-if (!roomId || !videoPath || !token) location.href = '/';
-else {
+async function initializeWatchTogether() {
+    const session = await requireAuthenticatedSession();
+    if (!session) return;
+    token = getAccessToken();
+    if (!roomId || !videoPath || !token) {
+        window.location.replace(appHomeUrl());
+        return;
+    }
     linkElement.value = location.href;
     connect();
 }
+
+initializeWatchTogether();
 
 function roomSocketUrl() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';

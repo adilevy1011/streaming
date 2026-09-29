@@ -782,12 +782,8 @@ async function restorePosition() {
 }
 
 async function startWatching() {
-    if (!path) return;
-    const session = await getAuthenticatedSession();
-    if (!session) {
-        window.location.href = window.location.protocol === 'file:' ? 'index.html' : '/';
-        return;
-    }
+    const session = await requireAuthenticatedSession();
+    if (!session || !path) return;
     currentUserId = session.user.id;
     await loadProfile();
     const videoName = (path.split('/').pop() || path).replace(/\.[^.]+$/, '');

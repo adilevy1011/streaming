@@ -3,6 +3,13 @@ const PROGRESS_SAVE_INTERVAL = 2000;
 const query = new URLSearchParams(window.location.search);
 const path = query.get('path');
 let roomId = null;
+
+function requestLandscapeOrientation() {
+    if (!/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)) return;
+    screen.orientation?.lock?.('landscape')?.catch(() => {});
+}
+
+requestLandscapeOrientation();
 const player = document.getElementById('video-player');
 const timelineShell = document.getElementById('timeline-shell');
 const previewTimeline = document.getElementById('preview-timeline');
@@ -203,6 +210,9 @@ async function loadProgress() {
 function formatTime(seconds) {
     if (!Number.isFinite(seconds)) return '0:00';
     const value = Math.max(0, Math.floor(seconds));
+    if (value >= 3600) {
+        return `${Math.floor(value / 3600)}:${String(Math.floor((value % 3600) / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+    }
     return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
@@ -919,6 +929,7 @@ captionsToggle.addEventListener('change', () => {
     void saveSubtitlePreference(enabled);
 });
 fullscreenToggle.addEventListener('click', async () => {
+    requestLandscapeOrientation();
     if (document.fullscreenElement || document.webkitFullscreenElement) {
         await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
         return;

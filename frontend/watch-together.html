@@ -3,89 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="screen-orientation" content="landscape">
+    <meta name="description" content="Watch videos together with ADLV Media Streamer.">
     <meta name="robots" content="noindex, nofollow">
     <meta name="googlebot" content="noindex, nofollow, noarchive, noimageindex">
     <meta name="bingbot" content="noindex, nofollow, noarchive, noimageindex">
+    <meta name="theme-color" content="#3ecf8e">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" href="icons/app_icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="ADLV Media Streamer">
+    <meta property="og:title" content="Watch Together | ADLV Media Streamer">
+    <meta property="og:description" content="Watch videos together with ADLV Media Streamer.">
+    <meta property="og:image" content="icons/app_icon.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="818">
+    <meta property="og:image:height" content="818">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Watch Together | ADLV Media Streamer">
+    <meta name="twitter:description" content="Watch videos together with ADLV Media Streamer.">
+    <meta name="twitter:image" content="icons/app_icon.png">
     <title>Watch Together | Adlv Media Stream</title>
-    <style>
-        :root { color-scheme: dark; }
-        body { margin: 0; padding: 0; background: #121212; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
-        .container { width: 100%; height: 100vh; }
-        button { padding: 10px 14px; border: 1px solid #333; border-radius: 8px; background: #3ecf8e; color: #000; font-weight: 700; cursor: pointer; }
-        button.secondary { background: #292929; color: #fff; }
-        button:disabled { opacity: .55; cursor: wait; }
-        .room-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); height: 100%; }
-        .room-grid > section { min-width: 0; min-height: 0; }
-        .video-player-shell { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; border: 0; border-radius: 0; box-shadow: none; }
-        .video-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 0; background: #000; }
-        .video-frame.user-idle { cursor: none; }
-        video { display: block; width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
-        .video-title { position: absolute; top: 16px; left: 64px; z-index: 3; max-width: calc(100% - 82px); padding: 9px 14px; overflow: hidden; color: #fff; font-size: 1.35rem; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; background: rgba(0,0,0,.68); border-radius: 7px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
-        .player-back-button { position: absolute; top: 16px; left: 18px; z-index: 4; display: grid; width: 38px; height: 38px; padding: 0; margin: 0; place-items: center; border: 0; border-radius: 7px; background: rgba(0,0,0,.68); color: #fff; font-size: 1.6rem; line-height: 1; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
-        .timeline-shell.controls-visible ~ .video-title, .video-frame.paused .video-title, .timeline-shell.controls-visible ~ .player-back-button, .video-frame.paused .player-back-button { opacity: 1; visibility: visible; pointer-events: auto; }
-        .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
-        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
-        .timeline-shell { position: absolute; inset: auto 0 0; z-index: 2; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0,0,0,.9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
-        .timeline-shell.controls-visible, .video-frame.paused .timeline-shell { opacity: 1; pointer-events: auto; }
-        .timeline-shell > input { display: block; width: 100%; margin: 0 0 7px; accent-color: #3ecf8e; cursor: pointer; }
-        .timeline-preview { position: absolute; bottom: 94px; left: 0; display: none; width: 160px; height: 90px; transform: translateX(-50%); background: #080808; border: 2px solid #fff; border-radius: 5px; pointer-events: none; }
-        .player-controls { display: flex; align-items: center; gap: 10px; color: #fff; }
-        .player-controls button { margin: 0; padding: 2px; border: 0; background: transparent; color: #fff; font-size: 1.35rem; }
-        .player-time { min-width: 105px; font-size: .85rem; white-space: nowrap; }
-        .volume-control { width: 80px; flex: none; accent-color: #fff; }
-        .control-spacer { flex: 1; }
-        .settings-wrap { position: relative; }
-        .settings-menu { position: absolute; right: 0; bottom: 32px; display: none; min-width: 170px; padding: 8px; background: rgba(25,25,25,.98); border: 1px solid #444; border-radius: 6px; box-shadow: 0 8px 24px #000; }
-        .settings-menu.open { display: block; }
-        .settings-menu label, .settings-menu select { display: block; width: 100%; margin: 4px 0; color: #fff; font-size: .85rem; }
-        .settings-menu select { padding: 5px; background: #333; border: 1px solid #555; border-radius: 4px; }
-        .room-sidebar { position: relative; min-width: 0; padding: 58px 16px 16px; overflow: auto; background: #171717; border-left: 1px solid #333; transition: opacity .2s ease, padding .2s ease; }
-        .room-sidebar-toggle { position: absolute; top: 12px; left: 12px; z-index: 6; width: 34px; height: 34px; padding: 0; margin: 0; border: 1px solid #444; border-radius: 7px; background: rgba(20,20,20,.9); color: #fff; font-size: 1.1rem; }
-        .room-grid.sidebar-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
-        .room-grid.sidebar-collapsed .room-sidebar { padding-right: 0; padding-left: 0; background: transparent; border-left: 0; overflow: visible; pointer-events: none; }
-        .room-grid.sidebar-collapsed .room-sidebar > :not(.room-sidebar-toggle) { opacity: 0; visibility: hidden; }
-        .room-grid.sidebar-collapsed .room-sidebar-toggle { left: -42px; opacity: 1; pointer-events: auto; }
-        .panel { padding: 16px; background: #1e1e1e; border: 1px solid #333; border-radius: 10px; }
-        .panel + .panel { margin-top: 12px; }
-        .link-row { display: flex; gap: 8px; }
-        input { min-width: 0; flex: 1; padding: 10px; background: #101010; color: #fff; border: 1px solid #444; border-radius: 7px; }
-        #status { min-height: 1.4em; color: #bbb; }
-        #participants { display: grid; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
-        .person { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; background: #292929; border-radius: 7px; }
-        .person small { color: #aaa; }
-        .person button { padding: 4px 7px; background: #a33; color: #fff; font-size: .8rem; }
-        .notice { padding: 12px; margin-top: 12px; background: #292929; border-radius: 7px; color: #ddd; }
-        .modal { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.75); }
-        .modal.hidden { display: none; }
-        .modal-card { width: min(420px, 100%); padding: 24px; background: #242424; border: 1px solid #555; border-radius: 12px; }
-        @media (max-width: 700px) { .room-grid { grid-template-columns: minmax(0, 1fr) minmax(220px, 78vw); } .timeline-shell { padding: 8px; } .player-controls { gap: 5px; flex-wrap: wrap; } .player-controls button { min-width: 34px; min-height: 34px; } .player-time { min-width: 0; flex: 1; font-size: .75rem; } .volume-control { width: 54px; } }
-        @media (max-width: 700px) {
-            .room-grid { display: block; position: relative; }
-            .room-grid > section { width: 100%; height: 100%; }
-            .room-sidebar { position: absolute; top: 0; right: 0; bottom: 0; width: min(86vw, 320px); box-sizing: border-box; z-index: 10; padding: 58px 12px 12px; }
-            .room-grid.sidebar-collapsed .room-sidebar { width: 0; padding-right: 0; padding-left: 0; }
-            .room-grid.sidebar-collapsed .room-sidebar-toggle { left: -42px; }
-            .timeline-shell { padding: 6px 8px; }
-            .player-controls { gap: 3px; }
-            .player-controls button { min-width: 30px; min-height: 30px; font-size: 1.1rem; }
-            .player-time { min-width: 76px; font-size: .7rem; }
-            .volume-control { width: 58px; }
-            .video-title { top: 10px; left: 54px; max-width: calc(100% - 64px); padding: 6px 9px; font-size: 1rem; }
-            .player-back-button { top: 10px; left: 10px; width: 34px; height: 34px; font-size: 1.35rem; }
-        }
-        @media (max-width: 700px) and (orientation: portrait) {
-            .player-controls { flex-wrap: wrap; }
-            .player-time { flex: 1 1 auto; }
-            .control-spacer { display: none; }
-        }
-        @media (max-width: 700px) and (orientation: landscape) {
-            .player-controls { flex-wrap: nowrap; }
-            .player-time { min-width: 82px; }
-            .timeline-shell { padding-bottom: 5px; }
-        }
-    </style>
+    <link rel="stylesheet" href="styles/player-common.css">
+    <link rel="stylesheet" href="styles/watch-together.css">
 </head>
 <body>
+<div class="orientation-lock" role="status" aria-live="polite"><div class="orientation-lock-content"><span class="orientation-lock-icon" aria-hidden="true">↔</span><h1>Rotate your device</h1><p>This player is designed for horizontal viewing.</p></div></div>
 <main class="container">
     <div class="room-grid">
         <section>
@@ -117,7 +65,7 @@
     </div>
 </main>
 <div id="removed-modal" class="modal hidden"><div class="modal-card"><h2>Removed from room</h2><p>You have been removed from this room.</p><button id="removed-ok">OK</button></div></div>
-<script src="api.js"></script>
-<script src="watch-together.js"></script>
+<script src="js/api.js"></script>
+<script src="js/watch-together.js"></script>
 </body>
 </html>

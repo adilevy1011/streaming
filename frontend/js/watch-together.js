@@ -2,6 +2,14 @@ const params = new URLSearchParams(location.search);
 const roomId = params.get('room');
 const videoPath = params.get('path');
 const token = getAccessToken();
+
+function requestLandscapeOrientation() {
+    if (!/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)) return;
+    screen.orientation?.lock?.('landscape')?.catch(() => {});
+}
+
+requestLandscapeOrientation();
+
 const player = document.getElementById('room-video');
 const videoFrame = document.getElementById('video-frame');
 const videoTitle = document.getElementById('video-title');
@@ -175,8 +183,9 @@ function updateControls() {
 }
 function formatTime(value) {
     if (!Number.isFinite(value) || value < 0) return '0:00';
-    const seconds = Math.floor(value); const minutes = Math.floor(seconds / 60); const rest = String(seconds % 60).padStart(2, '0');
-    return `${minutes}:${rest}`;
+    const seconds = Math.floor(value);
+    if (seconds >= 3600) return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 function attemptLocalPlayback() {
     if (!ready || !started) { statusElement.innerText = 'Press “I’m ready” before controlling playback.'; return; }
@@ -202,6 +211,7 @@ settingsToggle.onclick = event => { event.stopPropagation(); settingsMenu.classL
 playbackRate.onchange = () => { player.playbackRate = Number(playbackRate.value); sendCommand('rate', { playback_rate: player.playbackRate }); };
 captionsToggle.onchange = () => { [...player.textTracks].forEach(track => { track.mode = captionsToggle.checked ? 'showing' : 'disabled'; }); };
 fullscreenToggle.onclick = async () => {
+    requestLandscapeOrientation();
     if (document.fullscreenElement) return document.exitFullscreen();
     if (videoFrame.requestFullscreen) await videoFrame.requestFullscreen();
     else if (player.webkitEnterFullscreen) player.webkitEnterFullscreen();

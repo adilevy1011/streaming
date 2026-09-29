@@ -5,11 +5,12 @@
     "start_url": "./index.html",
     "scope": "./",
     "display": "standalone",
+    "orientation": "landscape",
     "background_color": "#121212",
     "theme_color": "#3ecf8e",
     "icons": [
         {
-            "src": "./app_icon.png",
+            "src": "./icons/app_icon.png",
             "type": "image/png",
             "sizes": "818x818"
         }

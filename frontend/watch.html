@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="screen-orientation" content="landscape">
     <meta name="description" content="Watch videos with ADLV Media Streamer.">
     <meta name="robots" content="noindex, nofollow, noarchive, noimageindex">
     <meta name="googlebot" content="noindex, nofollow, noarchive, noimageindex">
@@ -13,93 +14,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="icon" type="image/png" href="app_icon.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="icon" type="image/png" href="icons/app_icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="ADLV Media Streamer">
     <meta property="og:title" content="Watch | ADLV Media Streamer">
     <meta property="og:description" content="Watch videos with ADLV Media Streamer.">
-    <meta property="og:image" content="app_icon.png">
+    <meta property="og:image" content="icons/app_icon.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="818">
     <meta property="og:image:height" content="818">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Watch | ADLV Media Streamer">
     <meta name="twitter:description" content="Watch videos with ADLV Media Streamer.">
-    <meta name="twitter:image" content="app_icon.png">
+    <meta name="twitter:image" content="icons/app_icon.png">
     <title>Watch | Adlv Media Stream</title>
-    <style>
-        :root { color-scheme: dark; }
-        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; margin: 0; padding: 0; overflow: hidden; }
-        .container { width: 100%; height: 100vh; }
-        .hidden { display: none; }
-        button { padding: 11px 13px; margin: 5px 0; box-sizing: border-box; border-radius: 8px; border: 1px solid #333; background: #3ecf8e; color: #000; font-weight: bold; cursor: pointer; }
-        button:hover { filter: brightness(1.08); }
-        .back-button { background: #1e1e1e; color: #fff; width: auto; border: 1px solid #333; }
-        .video-player-shell { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; border: 0; border-radius: 0; box-shadow: none; }
-        .video-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 0; background: #000; }
-        .video-frame.user-idle { cursor: none; }
-        video { display: block; width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
-        .video-title { position: absolute; top: 16px; left: 64px; z-index: 11; max-width: calc(100% - 82px); padding: 9px 14px; overflow: hidden; color: #fff; font-size: 1.35rem; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; background: rgba(0, 0, 0, .68); border-radius: 7px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
-        .player-back-button { position: absolute; top: 16px; left: 18px; z-index: 12; display: grid; width: 38px; height: 38px; padding: 0; margin: 0; place-items: center; border: 0; border-radius: 7px; background: rgba(0, 0, 0, .68); color: #fff; font-size: 1.6rem; line-height: 1; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .25s ease, visibility .25s ease; }
-        .timeline-shell.controls-visible ~ .video-title, .video-frame.paused .video-title, .timeline-shell.controls-visible ~ .player-back-button, .video-frame.paused .player-back-button { opacity: 1; visibility: visible; pointer-events: auto; }
-        
-        .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
-        .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }
-        
-        .timeline-shell { position: absolute; inset: auto 0 0; z-index: 10; padding: 10px 14px 9px; background: linear-gradient(transparent, rgba(0, 0, 0, .9)); opacity: 0; pointer-events: none; transition: opacity .25s ease; will-change: opacity; transform: translateZ(0); }
-        .timeline-shell.controls-visible, .video-frame.paused .timeline-shell { opacity: 1; pointer-events: auto; }
-        .timeline-shell > input { display: block; width: 100%; margin: 0 0 7px; accent-color: #3ecf8e; cursor: pointer; }
-        .timeline-preview { position: absolute; bottom: 94px; left: 0; display: none; width: 160px; height: 90px; transform: translateX(-50%); background-color: #080808; background-repeat: no-repeat; border: 2px solid #fff; border-radius: 5px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); pointer-events: none; }
-        .player-controls { display: flex; align-items: center; gap: 10px; color: #fff; }
-        .player-controls button { margin: 0; padding: 2px; border: 0; background: transparent; color: #fff; font-size: 1.35rem; line-height: 1; }
-        .player-controls button:hover { filter: brightness(1.3); }
-        .player-time { min-width: 105px; font-size: .85rem; white-space: nowrap; }
-        .volume-control { width: 80px; accent-color: #fff; cursor: pointer; }
-        .control-spacer { flex: 1; }
-        .settings-wrap { position: relative; }
-        .settings-menu { position: absolute; right: 0; bottom: 32px; display: none; min-width: 170px; padding: 8px; background: rgba(25, 25, 25, .98); border: 1px solid #444; border-radius: 6px; box-shadow: 0 8px 24px #000; }
-        .settings-menu.open { display: block; }
-        .settings-menu label, .settings-menu select { display: block; width: 100%; margin: 4px 0; color: #fff; font-size: .85rem; }
-        .settings-menu label.hidden { display: none; }
-        .settings-menu select { padding: 5px; background: #333; border: 1px solid #555; border-radius: 4px; }
-        .completion-actions { position: absolute; right: 18px; bottom: 72px; z-index: 20; display: flex; flex-wrap: wrap; gap: 10px; max-width: calc(100% - 36px); padding: 10px; margin: 0; background: rgba(9, 9, 9, .88); border: 1px solid rgba(255, 255, 255, .16); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
-        .completion-actions.hidden { display: none; }
-        .completion-actions button { min-width: 150px; }
-        .completion-message { display: none !important; }
-        @media (max-width: 600px) {
-            .back-button { min-height: 42px; }
-            .timeline-shell { padding: 8px 8px 7px; }
-            .player-controls { gap: 5px; flex-wrap: wrap; }
-            .player-controls button { min-width: 34px; min-height: 34px; }
-            .player-time { min-width: 0; flex: 1; font-size: .75rem; }
-            .volume-control { width: 54px; }
-            .settings-menu { right: -4px; bottom: 36px; }
-            .completion-actions { right: 10px; bottom: 62px; left: 10px; max-width: none; padding: 8px; }
-            .completion-actions button { flex: 1 1 100%; min-width: 0; min-height: 40px; }
-        }
-        @media (max-width: 700px) {
-            .video-title { top: 10px; left: 54px; max-width: calc(100% - 64px); padding: 6px 9px; font-size: 1rem; }
-            .player-back-button { top: 10px; left: 10px; width: 34px; height: 34px; font-size: 1.35rem; }
-            .timeline-shell { padding: 6px 8px; }
-            .player-controls { gap: 3px; }
-            .player-controls button { min-width: 30px; min-height: 30px; font-size: 1.1rem; }
-            .player-time { min-width: 76px; font-size: .7rem; }
-            .volume-control { width: 58px; }
-        }
-        @media (max-width: 700px) and (orientation: portrait) {
-            .player-controls { flex-wrap: wrap; }
-            .player-time { flex: 1 1 auto; }
-            .control-spacer { display: none; }
-        }
-        @media (max-width: 700px) and (orientation: landscape) {
-            .player-controls { flex-wrap: nowrap; }
-            .player-time { min-width: 82px; }
-            .timeline-shell { padding-bottom: 5px; }
-        }
-    </style>
+    <link rel="stylesheet" href="styles/player-common.css">
+    <link rel="stylesheet" href="styles/watch.css">
 </head>
 <body>
+    <div class="orientation-lock" role="status" aria-live="polite"><div class="orientation-lock-content"><span class="orientation-lock-icon" aria-hidden="true">↔</span><h1>Rotate your device</h1><p>This player is designed for horizontal viewing.</p></div></div>
     <div class="container">
         <div class="video-player-shell" aria-label="Video player">
             <div class="video-frame" id="video-frame">
@@ -136,7 +70,7 @@
             </div>
         </div>
     </div>
-    <script src="api.js"></script>
-    <script src="watch.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/watch.js"></script>
 </body>
 </html>

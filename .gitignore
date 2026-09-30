@@ -11,9 +11,7 @@ __pycache__/
 *$py.class
 
 # Local testing
-run-local.*
-
-commands.txt
+local/
 
 # MobileNet Trainer
 data/*

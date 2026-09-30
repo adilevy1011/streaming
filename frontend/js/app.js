@@ -24,6 +24,9 @@ let adminDraftNewVideosAccess = true;
 let adminOriginalNewVideosAccess = true;
 const adminCollapsedFolders = new Set();
 let adminFolderStateInitialized = false;
+let adminFolderOrderings = [];
+let adminSelectedOrderingFolder = '';
+let adminOrderingDraft = [];
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 
@@ -132,6 +135,7 @@ async function showAdminActions() {
     const users = document.getElementById('admin-users');
     const videos = document.getElementById('admin-videos');
     modal.classList.remove('hidden');
+    setAdminTab('video');
     users.innerHTML = '';
     videos.innerHTML = '';
     selectedAdminUser = null;
@@ -144,9 +148,10 @@ async function showAdminActions() {
     adminFolderStateInitialized = false;
     status.innerHTML = '<span class="loading-spinner" role="status" aria-label="Loading admin data"></span> Loading users and videos...';
     try {
-        [adminUsers, adminVideos] = await Promise.all([
+        [adminUsers, adminVideos, adminFolderOrderings] = await Promise.all([
             apiRequest('/admin/users'),
-            apiRequest('/admin/videos')
+            apiRequest('/admin/videos'),
+            apiRequest('/admin/folder-orderings')
         ]);
         status.innerText = '';
         adminUserSearch = '';
@@ -155,8 +160,94 @@ async function showAdminActions() {
         document.getElementById('admin-video-search').value = '';
         renderAdminUsers();
         if (adminUsers.length) selectAdminUser(adminUsers[0]);
+        renderAdminOrderingFolders();
     } catch (error) {
         status.innerText = `Unable to load admin data: ${error.message}`;
+    }
+}
+
+function setAdminTab(tab) {
+    const videoTab = document.getElementById('admin-video-tab');
+    const orderingTab = document.getElementById('admin-ordering-tab');
+    const videoPanel = document.getElementById('admin-video-panel');
+    const orderingPanel = document.getElementById('admin-ordering-panel');
+    const videoActive = tab === 'video';
+    videoTab.classList.toggle('active', videoActive);
+    orderingTab.classList.toggle('active', !videoActive);
+    videoTab.setAttribute('aria-selected', String(videoActive));
+    orderingTab.setAttribute('aria-selected', String(!videoActive));
+    videoPanel.classList.toggle('hidden', !videoActive);
+    orderingPanel.classList.toggle('hidden', videoActive);
+    document.getElementById('admin-save').classList.toggle('hidden', !videoActive);
+}
+
+function adminOrderingName(path) {
+    return path.split('/').pop() || 'Library root';
+}
+
+function renderAdminOrderingFolders() {
+    const select = document.getElementById('admin-ordering-folder');
+    if (!select) return;
+    select.innerHTML = '';
+    adminFolderOrderings.forEach(ordering => {
+        const option = document.createElement('option');
+        option.value = ordering.folder_path || '';
+        option.innerText = ordering.folder_path || 'Library root';
+        select.appendChild(option);
+    });
+    if (!adminFolderOrderings.some(ordering => (ordering.folder_path || '') === adminSelectedOrderingFolder)) {
+        adminSelectedOrderingFolder = adminFolderOrderings[0]?.folder_path || '';
+    }
+    select.value = adminSelectedOrderingFolder;
+    const ordering = adminFolderOrderings.find(item => (item.folder_path || '') === adminSelectedOrderingFolder);
+    adminOrderingDraft = [...(ordering?.item_paths || [])];
+    renderAdminOrderingItems();
+}
+
+function renderAdminOrderingItems() {
+    const container = document.getElementById('admin-ordering-items');
+    if (!container) return;
+    container.innerHTML = '';
+    adminOrderingDraft.forEach(path => {
+        const item = document.createElement('div');
+        item.className = 'admin-ordering-item';
+        item.draggable = true;
+        item.dataset.path = path;
+        item.innerText = adminOrderingName(path);
+        item.title = path;
+        item.ondragstart = event => event.dataTransfer.setData('text/plain', path);
+        item.ondragover = event => event.preventDefault();
+        item.ondrop = event => {
+            event.preventDefault();
+            const moved = event.dataTransfer.getData('text/plain');
+            const from = adminOrderingDraft.indexOf(moved);
+            const to = adminOrderingDraft.indexOf(path);
+            if (from < 0 || to < 0 || from === to) return;
+            adminOrderingDraft.splice(from, 1);
+            adminOrderingDraft.splice(to, 0, moved);
+            renderAdminOrderingItems();
+        };
+        container.appendChild(item);
+    });
+}
+
+async function saveAdminFolderOrdering() {
+    const button = document.getElementById('admin-ordering-save');
+    if (!button) return;
+    button.disabled = true;
+    try {
+        const saved = await apiRequest(`/admin/folder-ordering?folder_path=${encodeURIComponent(adminSelectedOrderingFolder)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ item_paths: adminOrderingDraft })
+        });
+        adminFolderOrderings = adminFolderOrderings.map(ordering =>
+            (ordering.folder_path || '') === adminSelectedOrderingFolder ? saved : ordering
+        );
+        document.getElementById('admin-status').innerText = 'Folder order saved';
+    } catch (error) {
+        document.getElementById('admin-status').innerText = `Unable to save folder order: ${error.message}`;
+    } finally {
+        button.disabled = false;
     }
 }
 
@@ -1344,5 +1435,12 @@ document.getElementById('admin-select-all').onclick = () => setAllAdminVideoAcce
 document.getElementById('admin-deselect-all').onclick = () => setAllAdminVideoAccess(false);
 document.getElementById('admin-save').onclick = saveAdminChanges;
 document.getElementById('admin-new-videos-access').onchange = event => updateAdminNewVideosAccess(event.target);
+document.getElementById('admin-video-tab').onclick = () => setAdminTab('video');
+document.getElementById('admin-ordering-tab').onclick = () => setAdminTab('ordering');
+document.getElementById('admin-ordering-folder').onchange = event => {
+    adminSelectedOrderingFolder = event.target.value;
+    renderAdminOrderingFolders();
+};
+document.getElementById('admin-ordering-save').onclick = saveAdminFolderOrdering;
 
 checkAuth();

@@ -18,6 +18,9 @@ button:hover { filter: brightness(1.08); }
 .completion-actions { position: absolute; right: 18px; bottom: 72px; z-index: 20; display: flex; flex-wrap: wrap; gap: 10px; max-width: calc(100% - 36px); padding: 10px; margin: 0; background: rgba(9, 9, 9, .88); border: 1px solid rgba(255, 255, 255, .16); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .completion-actions.hidden { display: none; }
 .completion-actions button { min-width: 150px; }
+.next-video-preview { display: flex; align-items: center; gap: 8px; max-width: 260px; color: #fff; }
+.next-video-preview.hidden { display: none; }
+.next-video-preview img { width: 96px; height: 72px; object-fit: contain; background: #111; border-radius: 6px; }
 .completion-message { display: none !important; }
 @media (max-width: 600px) {
     .back-button { min-height: 42px; }

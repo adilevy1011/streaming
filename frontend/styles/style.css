@@ -38,6 +38,10 @@ button:disabled { opacity: .65; cursor: wait; }
 .admin-modal-topbar h2 { margin: 0; }
 .admin-modal-topbar button { margin: 0; }
 .admin-modal-topbar .admin-save-button { background: #3ecf8e; color: #000; margin-left: auto; }
+.admin-tabs { display: flex; gap: 8px; margin: 4px 0 16px; border-bottom: 1px solid #333; }
+.admin-tab { margin: 0; padding: 10px 14px; background: transparent; color: #aaa; border: 0; border-bottom: 2px solid transparent; border-radius: 0; }
+.admin-tab.active { color: #fff; border-bottom-color: #3ecf8e; }
+.admin-tab-panel.hidden { display: none; }
 .admin-save-modal { z-index: 20; }
 .admin-save-card { width: min(360px, 100%); text-align: center; }
 .admin-save-card .loading-spinner { width: 26px; height: 26px; margin-bottom: 12px; }
@@ -64,6 +68,11 @@ button:disabled { opacity: .65; cursor: wait; }
 .admin-video-name { overflow-wrap: anywhere; }
 .admin-new-videos-access { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bbb; }
 .admin-new-videos-access input { width: auto; margin: 0; }
+.admin-ordering-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid #333; }
+.admin-ordering-panel select { width: 100%; margin: 8px 0 12px; }
+.admin-ordering-items { display: grid; gap: 6px; margin-bottom: 12px; }
+.admin-ordering-item { padding: 10px 12px; background: #292929; border: 1px solid #444; border-radius: 6px; cursor: grab; user-select: none; overflow-wrap: anywhere; }
+.admin-ordering-item:active { cursor: grabbing; }
 @media (max-width: 600px) { .admin-layout { grid-template-columns: 1fr; } }
 .modal-cancel { background: #333; color: #fff; }
 .media-copy { min-width: 0; flex: 1; }

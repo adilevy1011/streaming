@@ -29,6 +29,9 @@ const fullscreenToggle = document.getElementById('fullscreen-toggle');
 const completionMessage = document.getElementById('completion-message');
 const completionActions = document.getElementById('completion-actions');
 const libraryButton = document.getElementById('library-button');
+const nextVideoPreview = document.getElementById('next-video-preview');
+const nextVideoImage = document.getElementById('next-video-image');
+const nextVideoName = document.getElementById('next-video-name');
 const creditsButton = document.getElementById('credits-button');
 const createRoomButton = document.getElementById('create-room');
 const roomLink = document.getElementById('room-link');
@@ -50,11 +53,8 @@ let previewManifest = null;
 let previewSpriteUrls = [];
 let creditsStartSeconds = null;
 let creditTimestampAvailable = false;
-let nextEpisodeFilesPromise = null;
-let nextEpisodeLookupPromise = null;
-let nextEpisodePath = null;
-let nextEpisodePrefetchStarted = false;
-let nextEpisodePreloader = null;
+let nextVideoPromise = null;
+let nextVideo = null;
 let completionActionsDismissed = false;
 let roomSocket = null;
 let roomReconnectTimer = null;
@@ -532,107 +532,59 @@ async function loadCredits(videoPath) {
     }
 }
 
-function episodeNumber(fileName) {
-    const seasonEpisode = fileName.match(/(s\d{1,3}e)(\d{1,3})/i);
-    if (seasonEpisode) return { value: Number(seasonEpisode[2]), width: seasonEpisode[2].length, pattern: seasonEpisode };
-    const namedEpisode = fileName.match(/((?:episode|ep)[ ._-]*)(\d{1,3})/i);
-    if (namedEpisode) return { value: Number(namedEpisode[2]), width: namedEpisode[2].length, pattern: namedEpisode };
-    const trailingNumber = fileName.match(/(\d{1,3})(?=\.[^.]+$)/);
-    if (trailingNumber) return { value: Number(trailingNumber[1]), width: trailingNumber[1].length, pattern: trailingNumber };
-    return null;
+async function loadNextVideo() {
+    if (!nextVideoPromise) {
+        nextVideoPromise = apiRequest(`/media/next?path=${encodeURIComponent(path)}`)
+            .then(video => { nextVideo = video; return video; })
+            .catch(error => { console.warn('Unable to find the next video', error); return null; });
+    }
+    return nextVideoPromise;
 }
 
-function replaceEpisodeNumber(fileName, episode) {
-    const info = episodeNumber(fileName);
-    if (!info) return null;
-    const replacement = String(episode).padStart(info.width, '0');
-    return fileName.slice(0, info.pattern.index + info.pattern[0].length - info.pattern[info.pattern.length - 1].length)
-        + replacement
-        + fileName.slice(info.pattern.index + info.pattern[0].length);
-}
-
-function naturalPathCompare(left, right) {
-    return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
-}
-
-function isTvShow(videoPath) {
-    const root = (videoPath.split('/')[0] || '').toLowerCase();
-    return ['shows', 'show', 'tv', 'tv-shows', 'tv_shows', 'tv shows', 'tvshows', 'television'].includes(root);
-}
-
-async function findNextEpisode(videoPath, filesPromise = null) {
-    const parts = videoPath.split('/');
-    if (!isTvShow(videoPath)) return null;
-
-    let files;
-    try { files = await (filesPromise || apiRequest('/media/files')); }
-    catch (error) { console.warn('Unable to find the next episode', error); return null; }
-    const available = new Set((files || []).map(file => file.path));
-    const fileName = parts[parts.length - 1] || '';
-    const currentEpisode = episodeNumber(fileName);
-    if (!currentEpisode) return null;
-    const directory = parts.slice(0, -1).join('/');
-    const nextName = replaceEpisodeNumber(fileName, currentEpisode.value + 1);
-    const sameSeasonPath = nextName ? (directory ? `${directory}/${nextName}` : nextName) : null;
-    if (sameSeasonPath && available.has(sameSeasonPath)) return sameSeasonPath;
-
-    const sameDirectoryPrefix = `${directory}/`;
-    const sameSeasonEpisode = [...available]
-        .filter(candidate => candidate.startsWith(sameDirectoryPrefix))
-        .filter(candidate => candidate.split('/').length === parts.length)
-        .filter(candidate => episodeNumber(candidate.split('/').pop() || '')?.value === currentEpisode.value + 1)
-        .sort(naturalPathCompare)[0];
-    if (sameSeasonEpisode) return sameSeasonEpisode;
-
-    const seasonIndex = parts.findIndex(part => /^season\s+\d+$/i.test(part));
-    if (seasonIndex < 0) return null;
-    const seasonNumber = Number(parts[seasonIndex].match(/\d+/)[0]);
-    const nextSeasonFiles = [...available]
-        .filter(candidate => {
-            const candidateParts = candidate.split('/');
-            const candidateSeason = candidateParts[seasonIndex] || '';
-            return candidateParts.length > seasonIndex + 1
-                && candidateParts.slice(0, seasonIndex).every((part, index) => part.toLowerCase() === (candidateParts[index] || '').toLowerCase())
-                && new RegExp(`^season\\s+${seasonNumber + 1}$`, 'i').test(candidateSeason);
-        })
-        .sort((left, right) => {
-            const leftEpisode = episodeNumber(left.split('/').pop() || '');
-            const rightEpisode = episodeNumber(right.split('/').pop() || '');
-            if (leftEpisode && rightEpisode && leftEpisode.value !== rightEpisode.value) return leftEpisode.value - rightEpisode.value;
-            if (leftEpisode) return -1;
-            if (rightEpisode) return 1;
-            return naturalPathCompare(left, right);
-        });
-    return nextSeasonFiles[0] || null;
-}
-
-function prefetchNextEpisode() {
-    if (nextEpisodePrefetchStarted || !isTvShow(path)) return;
-    nextEpisodePrefetchStarted = true;
-    nextEpisodeLookupPromise = findNextEpisode(path, nextEpisodeFilesPromise).then(nextPath => {
-        nextEpisodePath = nextPath;
-        if (!nextPath) return null;
-
-        nextEpisodePreloader = document.createElement('video');
-        nextEpisodePreloader.preload = 'auto';
-        nextEpisodePreloader.muted = true;
-        nextEpisodePreloader.playsInline = true;
-        nextEpisodePreloader.src = `/api/media/file/${nextPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`;
-        nextEpisodePreloader.style.position = 'fixed';
-        nextEpisodePreloader.style.width = '1px';
-        nextEpisodePreloader.style.height = '1px';
-        nextEpisodePreloader.style.opacity = '0';
-        nextEpisodePreloader.style.pointerEvents = 'none';
-        document.body.appendChild(nextEpisodePreloader);
-        nextEpisodePreloader.load();
-        return nextPath;
-    });
+function showNextVideo(video) {
+    if (!video) {
+        nextVideoPreview.classList.add('hidden');
+        libraryButton.innerText = '← Back to library';
+        libraryButton.classList.add('back-button');
+        libraryButton.onclick = returnToLibrary;
+        return;
+    }
+    const displayName = (video.name || video.path).replace(/\.[^.]+$/, '');
+    nextVideoName.innerText = `Next: ${displayName}`;
+    nextVideoPreview.classList.remove('hidden');
+    const previewManifest = video.previewManifest;
+    const spritePath = previewManifest?.sheets?.[0] || '';
+    const mediaUrl = assetPath => `/api/media/file/${assetPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}&cache=preview&v=${encodeURIComponent(previewManifest?.updated_at || video.previewImageUpdatedAt || '')}`;
+    const hidePreviewImage = () => {
+        nextVideoImage.removeAttribute('src');
+        nextVideoImage.classList.add('hidden');
+    };
+    const showSpriteFallback = () => {
+        if (!spritePath) {
+            hidePreviewImage();
+            return;
+        }
+        nextVideoImage.onerror = hidePreviewImage;
+        nextVideoImage.src = mediaUrl(spritePath);
+        nextVideoImage.classList.remove('hidden');
+    };
+    nextVideoImage.onerror = showSpriteFallback;
+    if (video.previewImagePath) {
+        nextVideoImage.src = mediaUrl(video.previewImagePath);
+        nextVideoImage.classList.remove('hidden');
+    } else {
+        showSpriteFallback();
+    }
+    libraryButton.innerText = 'Play next';
+    libraryButton.classList.remove('back-button');
+    libraryButton.onclick = playNextVideo;
 }
 
 function showCompletionActions() {
     if (!completionThresholdReached()) return;
     completionMessage.classList.remove('hidden');
     completionActions.classList.remove('hidden');
+    if (!roomId) void loadNextVideo().then(showNextVideo);
 }
 
 function updateCompletionActions() {
@@ -645,32 +597,22 @@ function updateCompletionActions() {
     completionActions.classList.add('hidden');
 }
 
-async function playNextEpisode(automatic = false) {
+async function playNextVideo() {
     if (libraryButton.disabled) return;
     libraryButton.disabled = true;
-    libraryButton.innerText = 'Finding next episode…';
+    libraryButton.innerText = 'Loading next video…';
     libraryButton.setAttribute('aria-busy', 'true');
     try {
-        const nextEpisode = nextEpisodePath || await (nextEpisodeLookupPromise || findNextEpisode(path, nextEpisodeFilesPromise));
-        if (!nextEpisode) {
-            if (automatic) {
-                returnToLibrary();
-                return;
-            }
-            libraryButton.disabled = false;
-            libraryButton.innerText = 'Next episode';
-            libraryButton.removeAttribute('aria-busy');
-            completionMessage.innerText = 'There is no next episode.';
-            return;
-        }
+        const next = nextVideo || await loadNextVideo();
+        if (!next) { returnToLibrary(); return; }
         const watchPage = window.location.protocol === 'file:' ? 'watch.html' : 'watch';
-        window.location.href = `${watchPage}?path=${encodeURIComponent(nextEpisode)}`;
+        window.location.href = `${watchPage}?path=${encodeURIComponent(next.path)}`;
     } catch (error) {
-        console.warn('Unable to start the next episode', error);
+        console.warn('Unable to start the next video', error);
         libraryButton.disabled = false;
-        libraryButton.innerText = 'Next episode';
+        libraryButton.innerText = 'Play next';
         libraryButton.removeAttribute('aria-busy');
-        completionMessage.innerText = 'Unable to find the next episode.';
+        completionMessage.innerText = 'Unable to find the next video.';
     }
 }
 
@@ -801,15 +743,7 @@ async function startWatching() {
         if (copyRoomLinkButton) copyRoomLinkButton.disabled = false;
     }
     libraryButton.onclick = returnToLibrary;
-    if (isTvShow(path) && !roomId) {
-        libraryButton.innerText = 'Next episode';
-        libraryButton.classList.remove('back-button');
-        libraryButton.onclick = playNextEpisode;
-        nextEpisodeFilesPromise = apiRequest('/media/files').catch(error => {
-            console.warn('Unable to preload the media listing', error);
-            return [];
-        });
-    }
+    if (!roomId) void loadNextVideo();
     
     player.src = `/api/media/file/${path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`;
     player.preload = 'auto';
@@ -827,10 +761,6 @@ async function startWatching() {
         }
         updatePlayerControls();
         updateCompletionActions();
-        if (Number.isFinite(player.duration) && player.duration > 0
-            && player.currentTime / player.duration >= 0.75) {
-            prefetchNextEpisode();
-        }
         saveCurrentProgress();
     };
     player.onplay = () => {
@@ -846,15 +776,16 @@ async function startWatching() {
     };
     player.onended = async () => {
         await saveCurrentProgress(true);
-        if (!creditTimestampAvailable) {
-            if (roomId) {
-                if (roomStatus) roomStatus.textContent = 'The watch room has reached the end of this video.';
-                return;
-            }
-            await playNextEpisode(true);
+        if (roomId) {
+            if (roomStatus) roomStatus.textContent = 'The watch room has reached the end of this video.';
             return;
         }
-        showCompletionActions();
+        showNextVideo(await loadNextVideo());
+        if (creditTimestampAvailable) showCompletionActions();
+        else {
+            completionMessage.classList.remove('hidden');
+            completionActions.classList.remove('hidden');
+        }
     };
 
     void attachMatchingSubtitle(path);

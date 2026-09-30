@@ -17,6 +17,7 @@ storage.buckets: media (private)
 
 public.media_objects  <-- catalog of non-generated bucket objects
     +-- public.videos  <-- one indexed row per source video
+    +-- public.folder_orderings  <-- direct item order and flattened playback sequence
 
 public.video_previews  <-- preview manifests, keyed by source video
 public.video_credits   <-- detected credit ranges, keyed by source video
@@ -64,6 +65,10 @@ This is the application-facing video index. Each row represents one source video
 | `user_access` | `text[]` | Optional lower-case email allowlist |
 
 Video visibility is enforced by RLS. Administrators can read and update video access lists. Other authenticated users can read a row when their email is explicitly listed, or when the list is empty and their profile permits access to new videos. Administrators bypass these restrictions. A trigger normalizes explicit lists and keeps current administrators included in non-empty lists.
+
+### `public.folder_orderings`
+
+Each row represents a virtual folder path, including nested folders and the empty library root. `item_paths` stores the ordered direct videos and child-folder paths. `ordered_video_paths` stores the recursively flattened depth-first playback sequence used by the watch API. Storage catalog triggers preserve existing order, insert new items by numeric filename suffix or alphabetically, and refresh affected ancestor folders. Administrators can reorder direct items from **Admin Actions**.
 
 ## User and playback tables
 

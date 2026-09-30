@@ -140,9 +140,9 @@ def validate_media_path(value: str) -> str:
         or any(part in {".", ".."} for part in value.split("/"))
     ):
         raise HTTPException(status_code=400, detail="Invalid media path.")
-    # These characters have special meaning in PostgREST filter expressions.
-    if any(character in value for character in "'\"(),{}"):
-        raise HTTPException(status_code=400, detail="Invalid media path.")
+    # Parentheses and other punctuation are valid Storage object names. Query
+    # parameters are encoded by httpx before being sent to PostgREST, so they
+    # must not be rejected here merely because they have query-syntax meaning.
     return normalized
 
 
@@ -236,6 +236,10 @@ class AdminNewVideosAccessRequest(BaseModel):
     new_videos_access: bool
 
 
+class FolderOrderingRequest(BaseModel):
+    item_paths: list[str] = Field(max_length=5000)
+
+
 def reject_unallowed(email: str) -> None:
     normalized_email = validate_email(email)
     if not normalized_email:
@@ -305,97 +309,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/auth/login")
-async def login(payload: LoginRequest) -> dict[str, Any]:
-    # Reject disallowed addresses before invoking Supabase Auth. This keeps
-    # unapproved login attempts out of the upstream auth service entirely.
-    email = validate_email(payload.email)
-    reject_unallowed(email)
-    retry_after = await rate_limiter.check(
-        f"login-email:{email}", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS
-    )
-    if retry_after is not None:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts; please try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
-    try:
-        session = await run_in_threadpool(
-            supabase.auth.sign_in_with_password,
-            {"email": email, "password": payload.password},
-        )
-        return session_response(session)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid email or password.") from exc
-
-
-@app.post("/api/auth/refresh")
-def refresh(payload: RefreshRequest) -> dict[str, Any]:
-    try:
-        session = supabase.auth.refresh_session(payload.refresh_token)
-        return session_response(session)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Unable to refresh session.") from exc
-
-
-@app.get("/api/auth/session")
-def session(user: Any = Depends(current_user)) -> dict[str, Any]:
-    return {"user": {"id": user.id, "email": user.email}}
-
-
-@app.get("/api/profile")
-def profile(user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
-    params = {
-        "select": "user_id,subtitles_enabled,admin_access,new_videos_access",
-        "user_id": f"eq.{user.id}",
-        "limit": "1",
-    }
-    data = supabase_request("GET", "/rest/v1/profiles", token, params=params) or []
-    if data:
-        return data[0]
-
-    row = {"user_id": user.id, "subtitles_enabled": False}
-    created = supabase_request(
-        "POST",
-        "/rest/v1/profiles",
-        token,
-        headers={"Prefer": "return=representation"},
-        json=row,
-    ) or []
-    return created[0] if created else {**row, "admin_access": False, "new_videos_access": True}
-
-
-@app.patch("/api/profile")
-def update_profile(payload: ProfileRequest, user: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any]:
-    row = {"user_id": user.id, "subtitles_enabled": payload.subtitles_enabled}
-    data = supabase_request(
-        "POST",
-        "/rest/v1/profiles",
-        token,
-        params={"on_conflict": "user_id"},
-        headers={"Prefer": "resolution=merge-duplicates,return=representation"},
-        json=row,
-    ) or []
-    return data[0] if data else row
-
-
-def admin_token(user: Any = Depends(current_user), token: str = Depends(current_token)) -> str:
-    data = supabase_request(
-        "GET",
-        "/rest/v1/profiles",
-        token,
-        params={"select": "admin_access", "user_id": f"eq.{user.id}", "limit": "1"},
-    ) or []
-    if not data or not data[0].get("admin_access"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
-    return token
-
-
 def catalog_rows(token: str, table: str, select: str, filters: dict[str, str] | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     offset = 0
@@ -452,20 +365,28 @@ def catalog_videos(token: str, path: str = "") -> list[dict[str, Any]]:
         "path,name,folder_path,updated_at",
         {"kind": "eq.image"},
     )
+    images_by_stem: dict[tuple[str, str], dict[str, Any]] = {}
+    for image in image_rows:
+        key = (image.get("folder_path", ""), image.get("name", "").rsplit(".", 1)[0].casefold())
+        images_by_stem.setdefault(key, image)
     prefix = f"{path.rstrip('/')}/" if path else ""
     videos = []
     for row in rows:
         video_path = row.get("path", "")
         if prefix and not video_path.startswith(prefix):
             continue
+        video_stem = row.get("name", "").rsplit(".", 1)[0].casefold()
+        matching_image = images_by_stem.get((row.get("folder_path", ""), video_stem))
+        preview_image_path = matching_image.get("path") if matching_image else row.get("preview_image_path")
+        preview_image_updated_at = matching_image.get("updated_at") if matching_image else row.get("preview_image_updated_at")
         video = {
             "name": row.get("name", ""),
             "path": video_path,
             "uploadedAt": row.get("created_at") or row.get("updated_at") or "",
         }
-        if row.get("preview_image_path"):
-            video["previewImagePath"] = row["preview_image_path"]
-            video["previewImageUpdatedAt"] = row.get("preview_image_updated_at") or ""
+        if preview_image_path:
+            video["previewImagePath"] = preview_image_path
+            video["previewImageUpdatedAt"] = preview_image_updated_at or ""
         folder_artworks = catalog_folder_artworks(video_path, image_rows)
         if folder_artworks:
             video["folderArtworks"] = folder_artworks
@@ -575,6 +496,12 @@ def ensure_media_asset_access(token: str, asset_path: str) -> None:
         ):
             return
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
+
+try:  # Authentication dependencies are used by the remaining route groups.
+    from auth_routes import admin_token
+except ImportError:
+    from .auth_routes import admin_token
+
 
 ROOM_STATE_PREFIX = "watch:room:"
 ROOM_CHANNEL_PREFIX = "watch:room:events:"
@@ -887,17 +814,6 @@ async def room_heartbeat(websocket: WebSocket) -> None:
     while True:
         await asyncio.sleep(20)
         await websocket.send_json({"type": "ping", "server_time_ms": int(time.time() * 1000)})
-
-
-@app.get("/api/media/stream")
-def media_stream(path: str = Query(default=""), _: Any = Depends(current_user), token: str = Depends(current_token)) -> StreamingResponse:
-    safe_path = validate_media_path(path) if path else ""
-    return StreamingResponse(stream_videos(token, safe_path), media_type="application/x-ndjson")
-
-
-@app.get("/api/media/files")
-def files(_: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
-    return list_files(token)
 
 
 @app.post("/api/watch/rooms")
@@ -1279,6 +1195,84 @@ def update_admin_video_access(
     return data[0]
 
 
+@app.get("/api/media/next")
+def next_media(path: str = Query(..., min_length=1), _: Any = Depends(current_user), token: str = Depends(current_token)) -> dict[str, Any] | None:
+    safe_path = validate_media_path(path)
+    visible_videos = catalog_videos(token)
+    visible_by_path = {video["path"]: video for video in visible_videos}
+    if safe_path not in visible_by_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+    root_folder = safe_path.split("/", 1)[0] if "/" in safe_path else ""
+    rows = supabase_request(
+        "GET",
+        "/rest/v1/folder_orderings",
+        token,
+        params={"select": "ordered_video_paths", "folder_path": f"eq.{root_folder}", "limit": "1"},
+    ) or []
+    if not rows:
+        return None
+    ordered_paths = rows[0].get("ordered_video_paths") or []
+    try:
+        current_index = ordered_paths.index(safe_path)
+    except ValueError:
+        return None
+    for candidate_path in ordered_paths[current_index + 1:]:
+        candidate = visible_by_path.get(candidate_path)
+        if candidate:
+            preview_rows = supabase_request(
+                "GET",
+                "/rest/v1/video_previews",
+                token,
+                params={
+                    "select": "media_path,sheets,updated_at",
+                    "media_path": f"eq.{candidate_path}",
+                    "limit": "1",
+                },
+            ) or []
+            result = dict(candidate)
+            if preview_rows:
+                result["previewManifest"] = preview_rows[0]
+            return result
+    return None
+
+
+@app.get("/api/admin/folder-orderings")
+def admin_folder_orderings(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
+    return supabase_request(
+        "GET",
+        "/rest/v1/folder_orderings",
+        token,
+        params={"select": "folder_path,item_paths,ordered_video_paths,updated_at", "order": "folder_path.asc"},
+    ) or []
+
+
+@app.patch("/api/admin/folder-ordering")
+def update_admin_folder_ordering(
+    payload: FolderOrderingRequest,
+    folder_path: str = Query(default=""),
+    token: str = Depends(admin_token),
+) -> dict[str, Any]:
+    folder_path = validate_media_path(folder_path) if folder_path else ""
+    item_paths = [validate_media_path(item) for item in payload.item_paths]
+    if len(item_paths) != len(set(item_paths)):
+        raise HTTPException(status_code=400, detail="Folder ordering contains duplicate items.")
+    supabase_request(
+        "POST",
+        "/rest/v1/rpc/admin_update_folder_ordering",
+        token,
+        json={"target_folder": folder_path, "new_items": item_paths},
+    )
+    rows = supabase_request(
+        "GET",
+        "/rest/v1/folder_orderings",
+        token,
+        params={"select": "folder_path,item_paths,ordered_video_paths,updated_at", "folder_path": f"eq.{folder_path}", "limit": "1"},
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder ordering not found.")
+    return rows[0]
+
+
 @app.get("/api/progress")
 def progress(user: Any = Depends(current_user), token: str = Depends(current_token)) -> list[dict[str, Any]]:
     params = {"select": "media_path,position_seconds,duration_seconds,completed,updated_at", "user_id": f"eq.{user.id}", "order": "updated_at.desc"}
@@ -1356,29 +1350,16 @@ async def media_file(media_path: str, request: Request, _: Any = Depends(current
     return StreamingResponse(stream(), status_code=upstream.status_code, headers=response_headers)
 
 
-@app.get("/", include_in_schema=False)
-def frontend_index() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+try:  # Running from the backend directory (the production layout).
+    from auth_routes import register as register_auth_routes
+    from catalog_routes import register as register_catalog_routes
+    from frontend_routes import register as register_frontend_routes
+except ImportError:  # Running as the backend package (tests/tools).
+    from .auth_routes import register as register_auth_routes
+    from .catalog_routes import register as register_catalog_routes
+    from .frontend_routes import register as register_frontend_routes
 
 
-@app.get("/watch", include_in_schema=False)
-def frontend_watch() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "watch.html")
-
-
-@app.get("/watch-together", include_in_schema=False)
-def frontend_watch_together() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "watch-together.html")
-
-
-@app.get("/login", include_in_schema=False)
-def frontend_login() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "auth" / "login.html")
-
-
-@app.get("/auth.js", include_in_schema=False)
-def frontend_auth_script() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "auth" / "auth.js")
-
-
-app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend")
+register_auth_routes()
+register_catalog_routes()
+register_frontend_routes()

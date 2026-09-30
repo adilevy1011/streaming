@@ -29,6 +29,12 @@ This creates `Films` and `Documentaries` tabs. `Inception` is shown directly as 
 
 Folders that contain no supported video files do not become tabs.
 
+## Playback order
+
+Every folder has a stored playback order for its direct videos and subfolders. Playback recursively enters a folder, plays all of its videos, then continues with the next item after that folder in the parent order. New items are inserted using a number immediately before the extension when available; otherwise they are inserted alphabetically without reordering existing items.
+
+Administrators can open **Admin Actions**, choose a folder under **Folder playback order**, drag its items into the desired order, and save. At the end of a video, **Play next** shows the next permitted video and its matching preview image when available. Videos hidden from a user are skipped. The final video shows **Back to library** instead.
+
 ## Subtitles
 
 Place an `.srt` subtitle file beside its video and give it the same base name:

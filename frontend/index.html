@@ -92,29 +92,43 @@
                 <button id="admin-save" class="admin-save-button" type="button">Save</button>
                 <button id="admin-close" class="modal-cancel" type="button">Close</button>
             </div>
-            <p class="muted">Select a user, then choose which videos they can access.</p>
             <p id="admin-status" class="muted"></p>
-            <div class="admin-layout">
-                <div>
-                    <h3>Users</h3>
-                    <input id="admin-user-search" class="admin-search" type="search" placeholder="Search users...">
-                    <div id="admin-users" class="admin-users"></div>
-                </div>
-                <div>
-                    <h3 id="admin-video-title">Videos</h3>
-                    <label id="admin-new-videos-access-row" class="admin-new-videos-access">
-                        <input id="admin-new-videos-access" type="checkbox">
-                        Automatically allow new videos
-                    </label>
-                    <p id="admin-video-permission-message" class="admin-permission-message hidden">Permissions cannot be changed for admin users. Admins always have access to every video.</p>
-                    <input id="admin-video-search" class="admin-search" type="search" placeholder="Search videos...">
-                    <div class="admin-bulk-actions">
-                        <button id="admin-select-all" type="button">Select all</button>
-                        <button id="admin-deselect-all" type="button">Deselect all</button>
-                    </div>
-                    <div id="admin-videos" class="admin-videos"></div>
-                </div>
+            <div class="admin-tabs" role="tablist" aria-label="Admin actions sections">
+                <button id="admin-video-tab" class="admin-tab active" type="button" role="tab" aria-selected="true">Video permissions</button>
+                <button id="admin-ordering-tab" class="admin-tab" type="button" role="tab" aria-selected="false">Folder playback ordering</button>
             </div>
+            <section id="admin-video-panel" class="admin-tab-panel" role="tabpanel">
+                <p class="muted">Select a user, then choose which videos they can access.</p>
+                <div class="admin-layout">
+                    <div>
+                        <h3>Users</h3>
+                        <input id="admin-user-search" class="admin-search" type="search" placeholder="Search users...">
+                        <div id="admin-users" class="admin-users"></div>
+                    </div>
+                    <div>
+                        <h3 id="admin-video-title">Videos</h3>
+                        <label id="admin-new-videos-access-row" class="admin-new-videos-access">
+                            <input id="admin-new-videos-access" type="checkbox">
+                            Automatically allow new videos
+                        </label>
+                        <p id="admin-video-permission-message" class="admin-permission-message hidden">Permissions cannot be changed for admin users. Admins always have access to every video.</p>
+                        <input id="admin-video-search" class="admin-search" type="search" placeholder="Search videos...">
+                        <div class="admin-bulk-actions">
+                            <button id="admin-select-all" type="button">Select all</button>
+                            <button id="admin-deselect-all" type="button">Deselect all</button>
+                        </div>
+                        <div id="admin-videos" class="admin-videos"></div>
+                    </div>
+                </div>
+            </section>
+            <section id="admin-ordering-panel" class="admin-tab-panel admin-ordering-panel hidden" role="tabpanel" aria-labelledby="admin-ordering-title">
+                <h3 id="admin-ordering-title">Folder playback order</h3>
+                <p class="muted">Drag items to control playback order. Folders are expanded recursively during playback.</p>
+                <label for="admin-ordering-folder">Folder</label>
+                <select id="admin-ordering-folder"></select>
+                <div id="admin-ordering-items" class="admin-ordering-items"></div>
+                <button id="admin-ordering-save" type="button">Save folder order</button>
+            </section>
         </div>
     </div>
     <div id="admin-save-modal" class="modal-backdrop admin-save-modal hidden" role="dialog" aria-modal="true" aria-labelledby="admin-save-title">

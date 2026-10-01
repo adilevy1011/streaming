@@ -4,9 +4,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
-    import main as api
+    import core as api
 except ImportError:
-    from . import main as api
+    from .. import core as api
 
 
 def register() -> None:

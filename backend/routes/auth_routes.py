@@ -2,13 +2,13 @@
 
 from typing import Any
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, HTTPException, status
 from starlette.concurrency import run_in_threadpool
 
-try:  # Running from the backend directory (the production layout).
-    import main as api
-except ImportError:  # Running as the backend package (tests/tools).
-    from . import main as api
+try: 
+    import core as api
+except ImportError: 
+    from .. import core as api
 
 
 def register() -> None:

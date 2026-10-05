@@ -1,4 +1,6 @@
 let allMedia = [];
+let libraryFolderOrderings = new Map();
+let serverProgressByPath = new Map();
 let activeView = 'my-library';
 let selectedPath = '';
 let previewObserver;
@@ -29,6 +31,15 @@ let adminSelectedOrderingFolder = '';
 let adminOrderingDraft = [];
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
+const TV_SHOW_ROOT_NAMES = new Set(['shows', 'show', 'tv shows', 'tv-shows', 'tvshows', 'series', 'tv']);
+
+function normalizedRootName(path) {
+    return (path || '').split('/')[0].trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+}
+
+function isTvShowPath(path) {
+    return TV_SHOW_ROOT_NAMES.has(normalizedRootName(path));
+}
 
 async function logout() {
     logoutFromApi();
@@ -625,6 +636,7 @@ async function loadMedia(options = {}) {
     mediaLoadAbortController?.abort();
     mediaLoadAbortController = new AbortController();
     const { signal } = mediaLoadAbortController;
+    await loadFolderOrderings();
     const listElement = document.getElementById('media-list');
     const status = document.getElementById('media-status');
     if (options.clearCache) {
@@ -712,6 +724,19 @@ async function loadPreviewManifests() {
     }
 }
 
+async function loadFolderOrderings() {
+    try {
+        const rows = await apiRequest('/media/folder-orderings');
+        libraryFolderOrderings = new Map((rows || []).map(row => [row.folder_path || '', {
+            itemPaths: row.item_paths || [],
+            videoPaths: row.ordered_video_paths || []
+        }]));
+    } catch (error) {
+        console.warn('Folder playback order is not available', error.message);
+        libraryFolderOrderings = new Map();
+    }
+}
+
 function mediaCategory(file) {
     return file.path.split('/')[0] || '';
 }
@@ -725,14 +750,40 @@ function capitalizeFirst(value) {
 }
 
 function mediaRoots() {
-    return [...new Set(allMedia.map(mediaCategory).filter(Boolean))].sort(naturalCompare);
+    return orderLibraryFolders([...new Set(allMedia.map(mediaCategory).filter(Boolean))], '');
+}
+
+function orderLibraryFolders(folderPaths, parentPath) {
+    const orderedItems = libraryFolderOrderings.get(parentPath)?.itemPaths || [];
+    const positions = new Map(orderedItems.map((itemPath, index) => [itemPath, index]));
+    return folderPaths.slice().sort((left, right) => {
+        const leftPosition = positions.get(left);
+        const rightPosition = positions.get(right);
+        if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
+        if (leftPosition !== undefined) return -1;
+        if (rightPosition !== undefined) return 1;
+        return naturalCompare(left, right);
+    });
+}
+
+function orderLibraryVideos(videos, parentPath) {
+    const orderedVideos = libraryFolderOrderings.get(parentPath)?.videoPaths || [];
+    const positions = new Map(orderedVideos.map((videoPath, index) => [videoPath, index]));
+    return videos.slice().sort((left, right) => {
+        const leftPosition = positions.get(left.path);
+        const rightPosition = positions.get(right.path);
+        if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
+        if (leftPosition !== undefined) return -1;
+        if (rightPosition !== undefined) return 1;
+        return naturalCompare(left.path, right.path);
+    });
 }
 
 function renderNavigation(rootOverride = null) {
     const tabs = document.getElementById('media-tabs');
     if (!tabs) return;
     tabs.innerHTML = '';
-    const roots = rootOverride ? [...rootOverride].sort(naturalCompare) : mediaRoots();
+    const roots = rootOverride ? orderLibraryFolders([...rootOverride], '') : mediaRoots();
     roots.forEach(root => {
         const button = document.createElement('button');
         button.className = 'nav-button';
@@ -886,6 +937,76 @@ function renderContinueWatching(progressByPath = activeProgressByPath) {
         list.appendChild(item);
     });
     section.classList.toggle('hidden', activeView !== 'my-library' || items.length === 0);
+    appendNextEpisodes();
+}
+
+function appendNextEpisodes() {
+    const section = document.getElementById('continue-section');
+    const continueList = document.getElementById('continue-list');
+    if (activeView !== 'my-library') return;
+    const mediaByPath = new Map(allMedia.map(file => [file.path, file]));
+    const placeholders = [...serverProgressByPath.values()]
+        .filter(progress => progress.started === false && !progress.completed)
+        .filter(progress => isTvShowPath(progress.path || progress.media_path))
+        .filter(progress => !mediaScanComplete || mediaByPath.has(progress.path || progress.media_path))
+        .sort((left, right) => progressTimestamp(right) - progressTimestamp(left))
+        .slice(0, Math.max(0, 8 - continueList.children.length));
+
+    placeholders.forEach(progress => {
+        const path = progress.path || progress.media_path;
+        const video = mediaByPath.get(path) || { path, name: path.split('/').pop() || path };
+        const item = document.createElement('li');
+        item.className = 'continue-item media-preview-card';
+        item.tabIndex = 0;
+        const content = document.createElement('div');
+        content.className = 'preview-card-content';
+        const itemHeader = document.createElement('div');
+        itemHeader.className = 'continue-item-header';
+        const name = document.createElement('span');
+        name.className = 'continue-name';
+        name.innerText = video.name.replace(/\.[^.]+$/, '');
+        const detail = document.createElement('small');
+        detail.className = 'muted';
+        detail.innerText = 'Next episode';
+        itemHeader.append(name);
+        const menuButton = document.createElement('button');
+        menuButton.className = 'continue-menu-button';
+        menuButton.type = 'button';
+        menuButton.innerText = '...';
+        menuButton.setAttribute('aria-label', `Options for ${name.innerText}`);
+        menuButton.title = 'Options';
+        const menu = document.createElement('div');
+        menu.className = 'continue-menu hidden';
+        const addMenuAction = (label, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.innerText = label;
+            button.onclick = event => { event.stopPropagation(); menu.classList.add('hidden'); action(); };
+            menu.appendChild(button);
+        };
+        addMenuAction('Watch', () => playMedia(path));
+        addMenuAction('Remove from my list', () => removeProgress(path));
+        menuButton.onclick = event => {
+            event.stopPropagation();
+            document.querySelectorAll('.continue-menu').forEach(other => { if (other !== menu) other.classList.add('hidden'); });
+            menu.classList.toggle('hidden');
+        };
+        const track = document.createElement('div');
+        track.className = 'progress-track';
+        const fill = document.createElement('div');
+        fill.className = 'progress-fill';
+        fill.style.width = '0%';
+        track.appendChild(fill);
+        content.append(itemHeader, detail, track);
+        item.append(createVideoPreview(video), content, menuButton, menu);
+        item.onclick = () => playMedia(path);
+        item.onkeydown = event => {
+            if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) playMedia(path);
+        };
+        continueList.appendChild(item);
+    });
+    section.classList.toggle('hidden', activeView !== 'my-library' || continueList.children.length === 0);
+    addVideoPreviews();
 }
 
 function renderWatchAgain(progressByPath = activeProgressByPath) {
@@ -896,7 +1017,8 @@ function renderWatchAgain(progressByPath = activeProgressByPath) {
     const items = [...progressByPath.values()]
         .filter(progress => progress.completed)
         .filter(progress => !mediaScanComplete || mediaByPath.has(progress.path || progress.media_path))
-        .sort((left, right) => progressTimestamp(right) - progressTimestamp(left));
+        .sort((left, right) => progressTimestamp(right) - progressTimestamp(left))
+        .slice(0, 3);
 
     items.forEach(progress => {
         const path = progress.path || progress.media_path;
@@ -997,6 +1119,7 @@ async function removeProgress(path) {
     try {
         await apiRequest(`/progress?media_path=${encodeURIComponent(path)}`, { method: 'DELETE' });
         activeProgressByPath.delete(path);
+        serverProgressByPath.delete(path);
         removeLocalProgress(path);
         renderContinueWatching();
         renderWatchAgain();
@@ -1012,17 +1135,21 @@ async function restartProgress(path, progress) {
         media_path: path,
         position_seconds: 0,
         completed: false,
+        started: true,
         updated_at: new Date().toISOString()
     };
     try {
         await apiRequest('/progress', { method: 'POST', body: JSON.stringify({
             media_path: path,
             position_seconds: 0,
-            duration_seconds: Number.isFinite(Number(progress.duration_seconds)) ? Number(progress.duration_seconds) : null,
+            duration_seconds: Number.isFinite(Number(progress.duration_seconds)) && Number(progress.duration_seconds) > 0
+                ? Number(progress.duration_seconds) : null,
             completed: false,
+            started: true,
             updated_at: reset.updated_at
         }) });
         activeProgressByPath.set(path, reset);
+        serverProgressByPath.set(path, reset);
         setLocalProgress({ ...reset, key: getProgressKey(currentUserId, path) });
         playMedia(path);
     } catch (error) {
@@ -1032,6 +1159,7 @@ async function restartProgress(path, progress) {
 
 async function loadContinueWatching(generation) {
     if (!currentUserId) return;
+    serverProgressByPath = new Map();
 
     const localProgress = getLocalProgress();
     const progressByPath = new Map();
@@ -1044,13 +1172,20 @@ async function loadContinueWatching(generation) {
 
     try {
         const data = await apiRequest('/progress');
+        serverProgressByPath = new Map((data || []).map(progress => [progress.media_path, {
+            ...progress,
+            started: progress.started !== false,
+            path: progress.media_path,
+            key: getProgressKey(currentUserId, progress.media_path)
+        }]));
         const syncs = [];
         const remotePaths = new Set();
         (data || []).forEach(progress => {
             remotePaths.add(progress.media_path);
             const local = progressByPath.get(progress.media_path);
-        const remote = {
+            const remote = {
                 ...progress,
+                started: progress.started !== false,
                 key: getProgressKey(currentUserId, progress.media_path),
                 path: progress.media_path
             };
@@ -1069,6 +1204,7 @@ async function loadContinueWatching(generation) {
         });
         await Promise.all(syncs);
     } catch (error) {
+        serverProgressByPath = new Map();
         console.warn('Unable to load Continue watching items', error);
     }
     if (generation === mediaLoadGeneration) renderContinueWatching(progressByPath);
@@ -1080,9 +1216,10 @@ async function saveProgressToApi(progress) {
         user_id: currentUserId,
         media_path: progress.path || progress.media_path,
         position_seconds: Math.max(0, Number(progress.position_seconds) || 0),
-        duration_seconds: Number.isFinite(Number(progress.duration_seconds))
+        duration_seconds: Number.isFinite(Number(progress.duration_seconds)) && Number(progress.duration_seconds) > 0
             ? Number(progress.duration_seconds) : null,
         completed: !!progress.completed,
+        started: progress.started !== false,
         updated_at: new Date().toISOString()
     };
     try {
@@ -1320,10 +1457,9 @@ function renderMedia() {
         });
     });
 
-    [...folderPaths]
+    orderLibraryFolders([...folderPaths], browsePath)
         .filter(folderPath => !flattenedFolderPaths.has(folderPath))
         .filter(folderPath => mediaCategoryLabel(folderPath).toLowerCase().includes(query))
-        .sort(naturalCompare)
         .forEach(folderPath => {
             listElement.appendChild(renderFolderButton(
                 mediaCategoryLabel(folderPath),
@@ -1337,10 +1473,12 @@ function renderMedia() {
         .filter(file => activeView === 'all'
             || (browsingCategory && file.path.split('/').slice(0, -1).join('/') === browsePath)
             || flattenedVideoPaths.has(file.path))
-        .filter(file => file.path.toLowerCase().includes(query))
-        .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
+        .filter(file => file.path.toLowerCase().includes(query));
+    const orderedVisibleMedia = browsingCategory
+        ? orderLibraryVideos(visibleMedia, browsePath)
+        : visibleMedia.sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
 
-    visibleMedia.forEach(file => {
+    orderedVisibleMedia.forEach(file => {
         const li = document.createElement('li');
         li.className = 'media-item library-card';
         li.tabIndex = 0;

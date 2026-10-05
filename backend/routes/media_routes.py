@@ -18,9 +18,53 @@ except ImportError:
     from .. import core as api
 from .auth_routes import admin_token
 
+TV_SHOW_ROOT_NAMES = {"shows", "show", "tv shows", "tv-shows", "tvshows", "series", "tv"}
+
+
+def is_tv_show_path(path: str) -> bool:
+    root = (path or "").split("/", 1)[0].strip().lower().replace("_", " ").replace("-", " ")
+    return " ".join(root.split()) in TV_SHOW_ROOT_NAMES
+
 
 def register() -> None:
     app = api.app
+
+    def next_tv_placeholder(path: str, user_id: str, token: str) -> str | None:
+        if not is_tv_show_path(path):
+            return None
+        visible_by_path = {video["path"]: video for video in api.catalog_videos(token)}
+        if path not in visible_by_path:
+            return None
+        root_folder = path.split("/", 1)[0] if "/" in path else ""
+        ordering_rows = api.supabase_request(
+            "GET",
+            "/rest/v1/folder_orderings",
+            token,
+            params={"select": "ordered_video_paths", "folder_path": f"eq.{root_folder}", "limit": "1"},
+        ) or []
+        ordered_paths = ordering_rows[0].get("ordered_video_paths") or [] if ordering_rows else []
+        try:
+            current_index = ordered_paths.index(path)
+        except ValueError:
+            return None
+
+        progress_rows = api.supabase_request(
+            "GET",
+            "/rest/v1/video_progress",
+            token,
+            params={"select": "media_path,started,completed", "user_id": f"eq.{user_id}"},
+        ) or []
+        progress_by_path = {row.get("media_path"): row for row in progress_rows}
+        for candidate_path in ordered_paths[current_index + 1:]:
+            if candidate_path not in visible_by_path:
+                continue
+            progress = progress_by_path.get(candidate_path)
+            if progress and progress.get("completed"):
+                continue
+            if progress and progress.get("started", True):
+                return None
+            return candidate_path
+        return None
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -130,12 +174,21 @@ def register() -> None:
         for candidate_path in ordered_paths[current_index + 1:]:
             candidate = visible_by_path.get(candidate_path)
             if candidate:
-                preview_rows = api.supabase_request("GET", "/rest/v1/video_previews", token, params={"select": "media_path,sheets,updated_at", "media_path": f"eq.{candidate_path}", "limit": "1"}) or []
+                preview_rows = api.supabase_request("GET", "/rest/v1/video_previews", token, params={"select": "media_path,sheets,columns,rows,updated_at", "media_path": f"eq.{candidate_path}", "limit": "1"}) or []
                 result = dict(candidate)
                 if preview_rows:
                     result["previewManifest"] = preview_rows[0]
                 return result
         return None
+
+    @app.get("/api/media/folder-orderings")
+    def media_folder_orderings(_: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> list[dict[str, Any]]:
+        return api.supabase_request(
+            "GET",
+            "/rest/v1/folder_orderings",
+            token,
+            params={"select": "folder_path,item_paths,ordered_video_paths", "order": "folder_path.asc"},
+        ) or []
 
     @app.get("/api/admin/folder-orderings")
     def admin_folder_orderings(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
@@ -155,7 +208,7 @@ def register() -> None:
 
     @app.get("/api/progress")
     def progress(user: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> list[dict[str, Any]]:
-        return api.supabase_request("GET", "/rest/v1/video_progress", token, params={"select": "media_path,position_seconds,duration_seconds,completed,updated_at", "user_id": f"eq.{user.id}", "order": "updated_at.desc"}) or []
+        return api.supabase_request("GET", "/rest/v1/video_progress", token, params={"select": "media_path,position_seconds,duration_seconds,completed,started,updated_at", "user_id": f"eq.{user.id}", "order": "updated_at.desc"}) or []
 
     @app.post("/api/progress")
     def save_progress(payload: api.ProgressRequest, user: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> dict[str, Any]:
@@ -163,6 +216,30 @@ def register() -> None:
         row = payload.model_dump(exclude_none=True)
         row["user_id"] = user.id
         data = api.supabase_request("POST", "/rest/v1/video_progress", token, params={"on_conflict": "user_id,media_path"}, headers={"Prefer": "resolution=merge-duplicates,return=representation"}, json=row)
+        if payload.completed:
+            next_path = next_tv_placeholder(payload.media_path, user.id, token)
+            if next_path:
+                existing = api.supabase_request(
+                    "GET",
+                    "/rest/v1/video_progress",
+                    token,
+                    params={"select": "media_path", "user_id": f"eq.{user.id}", "media_path": f"eq.{next_path}", "limit": "1"},
+                ) or []
+                if not existing:
+                    api.supabase_request(
+                        "POST",
+                        "/rest/v1/video_progress",
+                        token,
+                        params={"on_conflict": "user_id,media_path"},
+                        json={
+                            "user_id": user.id,
+                            "media_path": next_path,
+                            "position_seconds": 0,
+                            "duration_seconds": None,
+                            "completed": False,
+                            "started": False,
+                        },
+                    )
         return (data or [row])[0]
 
     @app.delete("/api/progress")

@@ -178,8 +178,9 @@ class RefreshRequest(BaseModel):
 class ProgressRequest(BaseModel):
     media_path: str = Field(min_length=1, max_length=1024)
     position_seconds: float = Field(ge=0)
-    duration_seconds: float | None = Field(default=None, ge=0)
+    duration_seconds: float | None = Field(default=None, gt=0)
     completed: bool = False
+    started: bool = True
     updated_at: str | None = None
 
 

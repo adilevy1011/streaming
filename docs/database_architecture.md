@@ -96,6 +96,7 @@ Per-user resumable playback checkpoints. The composite primary key `(user_id, me
 | `position_seconds` | `double precision` | `0`, must be `>= 0` | Last playback position |
 | `duration_seconds` | `double precision` | Nullable; if present, `> 0` | Known duration |
 | `completed` | `boolean` | `false` | Whether playback is complete |
+| `started` | `boolean` | `true` | Whether the viewer has started playback; TV episode placeholders use `false` |
 | `updated_at` | `timestamptz` | UTC `now()` | Last checkpoint update |
 
 Authenticated users can select, insert, update, and delete only their own rows. The API upserts using `(user_id, media_path)`.

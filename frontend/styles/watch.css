@@ -20,7 +20,7 @@ button:hover { filter: brightness(1.08); }
 .completion-actions button { min-width: 150px; }
 .next-video-preview { display: flex; align-items: center; gap: 8px; max-width: 260px; color: #fff; }
 .next-video-preview.hidden { display: none; }
-.next-video-preview img { width: 96px; height: 72px; object-fit: contain; background: #111; border-radius: 6px; }
+.next-video-preview > div { width: 96px; height: 72px; background-color: #111; background-position: center; background-repeat: no-repeat; background-size: contain; border-radius: 6px; }
 .completion-message { display: none !important; }
 @media (max-width: 600px) {
     .back-button { min-height: 42px; }

@@ -158,7 +158,7 @@ function cacheProgress(position, duration, completed = false) {
     setLocalProgress({
         key: getProgressKey(path), path,
         position_seconds: position, duration_seconds: duration || null,
-        completed, updated_at: new Date().toISOString()
+        completed, started: true, updated_at: new Date().toISOString()
     });
 }
 
@@ -167,8 +167,8 @@ async function saveProgress(position, duration, completed = false) {
     const payload = {
         user_id: currentUserId, media_path: path,
         position_seconds: Math.max(0, position),
-        duration_seconds: Number.isFinite(duration) ? duration : null,
-        completed, updated_at: new Date().toISOString()
+        duration_seconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+        completed, started: true, updated_at: new Date().toISOString()
     };
     cacheProgress(payload.position_seconds, payload.duration_seconds, completed);
     try { await apiRequest('/progress', { method: 'POST', body: JSON.stringify(payload), keepalive: true }); }
@@ -556,7 +556,7 @@ function showNextVideo(video) {
     const spritePath = previewManifest?.sheets?.[0] || '';
     const mediaUrl = assetPath => `/api/media/file/${assetPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}&cache=preview&v=${encodeURIComponent(previewManifest?.updated_at || video.previewImageUpdatedAt || '')}`;
     const hidePreviewImage = () => {
-        nextVideoImage.removeAttribute('src');
+        nextVideoImage.style.backgroundImage = '';
         nextVideoImage.classList.add('hidden');
     };
     const showSpriteFallback = () => {
@@ -564,14 +564,26 @@ function showNextVideo(video) {
             hidePreviewImage();
             return;
         }
-        nextVideoImage.onerror = hidePreviewImage;
-        nextVideoImage.src = mediaUrl(spritePath);
-        nextVideoImage.classList.remove('hidden');
+        const image = new Image();
+        image.onload = () => {
+            nextVideoImage.style.backgroundImage = `url("${mediaUrl(spritePath)}")`;
+            nextVideoImage.style.backgroundSize = `${(previewManifest.columns || 1) * 100}% ${(previewManifest.rows || 1) * 100}%`;
+            nextVideoImage.style.backgroundPosition = '0 0';
+            nextVideoImage.classList.remove('hidden');
+        };
+        image.onerror = hidePreviewImage;
+        image.src = mediaUrl(spritePath);
     };
-    nextVideoImage.onerror = showSpriteFallback;
     if (video.previewImagePath) {
-        nextVideoImage.src = mediaUrl(video.previewImagePath);
-        nextVideoImage.classList.remove('hidden');
+        const image = new Image();
+        image.onload = () => {
+            nextVideoImage.style.backgroundImage = `url("${mediaUrl(video.previewImagePath)}")`;
+            nextVideoImage.style.backgroundSize = 'contain';
+            nextVideoImage.style.backgroundPosition = 'center';
+            nextVideoImage.classList.remove('hidden');
+        };
+        image.onerror = showSpriteFallback;
+        image.src = mediaUrl(video.previewImagePath);
     } else {
         showSpriteFallback();
     }

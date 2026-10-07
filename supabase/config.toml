@@ -272,7 +272,7 @@ max_frequency = "5s"
 # Force log out after the specified duration.
 # Leave timebox unset so the inactivity window can slide indefinitely.
 # Force log out if the user has been inactive longer than the specified duration.
-inactivity_timeout = "30d"
+inactivity_timeout = "720h"
 
 # This hook runs before a new user is created and allows developers to reject the request based on the incoming user object.
 # [auth.hook.before_user_created]

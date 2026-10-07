@@ -8,6 +8,10 @@ input, button { padding: 11px 13px; margin: 5px 0; box-sizing: border-box; borde
 input { width: 100%; background: #191919; color: #fff; }
 button { background: #3ecf8e; border: none; color: #000; font-weight: bold; cursor: pointer; }
 button:hover { filter: brightness(1.08); }
+.button-link { display: inline-block; padding: 11px 13px; margin: 5px 0; box-sizing: border-box; border-radius: 8px; background: #6f7bf7; color: #fff; font: bold 13.3333px Arial; line-height: normal; text-decoration: none; text-align: center; }
+.button-link:hover { filter: brightness(1.08); }
+.button-link.hidden { display: none; }
+.site-header .admin-save-button { background: #3ecf8e; color: #000; }
 .toolbar { display: flex; gap: 10px; align-items: center; margin: 18px 0; }
 .toolbar input { flex: 1; margin: 0; }
 .toolbar button { width: auto; margin: 0; }
@@ -68,7 +72,7 @@ button:disabled { opacity: .65; cursor: wait; }
 .admin-video-name { overflow-wrap: anywhere; }
 .admin-new-videos-access { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bbb; }
 .admin-new-videos-access input { width: auto; margin: 0; }
-.admin-ordering-panel { margin-top: 22px; padding-top: 18px; border-top: 1px solid #333; }
+.admin-ordering-panel { margin-top: 0; padding-top: 0; }
 .admin-ordering-panel select { width: 100%; margin: 8px 0 12px; }
 .admin-ordering-items { display: grid; gap: 6px; margin-bottom: 12px; }
 .admin-ordering-item { padding: 10px 12px; background: #292929; border: 1px solid #444; border-radius: 6px; cursor: grab; user-select: none; overflow-wrap: anywhere; }

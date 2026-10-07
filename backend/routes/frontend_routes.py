@@ -16,6 +16,10 @@ def register() -> None:
     def frontend_index() -> FileResponse:
         return FileResponse(api.FRONTEND_DIR / "index.html")
 
+    @app.get("/admin-actions", include_in_schema=False)
+    def frontend_admin_actions() -> FileResponse:
+        return FileResponse(api.FRONTEND_DIR / "admin-actions.html")
+
     @app.get("/watch", include_in_schema=False)
     def frontend_watch() -> FileResponse:
         return FileResponse(api.FRONTEND_DIR / "watch.html")

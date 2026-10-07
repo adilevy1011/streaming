@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="Administrator actions | ADLV Medai Server">
+        <meta name="robots" content="noindex, nofollow, noarchive, noimageindex">
+        <meta name="googlebot" content="noindex, nofollow, noarchive, noimageindex">
+        <meta name="bingbot" content="noindex, nofollow, noarchive, noimageindex">
+        <meta name="theme-color" content="#3ecf8e">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <link rel="manifest" href="manifest.json">
+        <link rel="icon" type="image/x-icon" href="favicon.ico">
+        <link rel="icon" type="image/png" href="icons/app_icon.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+        <meta property="og:type" content="website">
+        <meta property="og:site_name" content="ADLV Media Streamer">
+        <meta property="og:title" content="Admin Actions">
+        <meta property="og:description" content="Administrator actions in your private ADLV Medai Server">
+        <meta property="og:image" content="icons/app_icon.png">
+        <meta property="og:image:type" content="image/png">
+        <meta property="og:image:width" content="818">
+        <meta property="og:image:height" content="818">
+        <meta name="twitter:card" content="summary">
+        <meta name="twitter:title" content="Admin Actions">
+        <meta name="twitter:description" content="Administrator actions in your private ADLV Medai Server">
+        <meta name="twitter:image" content="icons/app_icon.png">
+        <title>Admin Actions | Adlv Media Stream</title>
+        <link rel="stylesheet" href="styles/style.css">
+    </head>
+    <body>
+        <div id="admin-container" class="container hidden">
+            <header class="site-header">
+                <h1>Admin Actions</h1>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <a id="back-link" class="button-link" href="/">Back to library</a>
+                    <button id="admin-save" class="admin-save-button" type="button" style="width: auto;">Save</button>
+                </div>
+            </header>
+            <div id="admin-page" class="admin-page">
+                <p id="admin-status" class="muted"></p>
+                <div class="admin-tabs" role="tablist" aria-label="Admin actions sections">
+                    <button id="admin-video-tab" class="admin-tab active" type="button" role="tab" aria-selected="true">Video permissions</button>
+                    <button id="admin-ordering-tab" class="admin-tab" type="button" role="tab" aria-selected="false">Folder playback ordering</button>
+                </div>
+                <section id="admin-video-panel" class="admin-tab-panel" role="tabpanel">
+                    <p class="muted">Select a user, then choose which videos they can access.</p>
+                    <div class="admin-layout">
+                        <div>
+                            <h3>Users</h3>
+                            <input id="admin-user-search" class="admin-search" type="search" placeholder="Search users...">
+                            <div id="admin-users" class="admin-users"></div>
+                        </div>
+                        <div>
+                            <h3 id="admin-video-title">Videos</h3>
+                            <label id="admin-new-videos-access-row" class="admin-new-videos-access">
+                                <input id="admin-new-videos-access" type="checkbox">
+                                Automatically allow new videos
+                            </label>
+                            <input id="admin-video-search" class="admin-search" type="search" placeholder="Search videos...">
+                            <div class="admin-bulk-actions">
+                                <button id="admin-select-all" type="button">Select all</button>
+                                <button id="admin-deselect-all" type="button">Deselect all</button>
+                            </div>
+                            <div id="admin-videos" class="admin-videos"></div>
+                        </div>
+                    </div>
+                </section>
+                <section id="admin-ordering-panel" class="admin-tab-panel admin-ordering-panel hidden" role="tabpanel" aria-labelledby="admin-ordering-title">
+                    <h3 id="admin-ordering-title">Folder playback order</h3>
+                    <p class="muted">Drag items to control playback order. Folders are expanded recursively during playback.</p>
+                    <label for="admin-ordering-folder">Folder</label>
+                    <select id="admin-ordering-folder"></select>
+                    <div id="admin-ordering-items" class="admin-ordering-items"></div>
+                </section>
+            </div>
+        </div>
+        <div id="admin-leave-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="admin-leave-title">
+            <div class="modal-card">
+                <h2 id="admin-leave-title">Save page?</h2>
+                <p class="muted">You have unsaved changes.</p>
+                <div class="modal-actions">
+                    <button id="admin-leave-cancel" class="modal-cancel" type="button">Cancel</button>
+                    <button id="admin-leave-discard" class="modal-cancel" type="button">Close Without Saving</button>
+                    <button id="admin-leave-save" type="button">Save and Close</button>
+                </div>
+            </div>
+        </div>
+        <div id="admin-save-modal" class="modal-backdrop admin-save-modal hidden" role="dialog" aria-modal="true" aria-labelledby="admin-save-title">
+            <div class="modal-card admin-save-card">
+                <span class="loading-spinner" aria-hidden="true"></span>
+                <h2 id="admin-save-title">Saving changes</h2>
+                <p class="muted">Please wait while video permissions are updated.</p>
+            </div>
+        </div>
+        <script src="js/api.js"></script>
+        <script src="auth/auth.js"></script>
+        <script src="js/admin-actions.js"></script>
+    </body>
+</html>

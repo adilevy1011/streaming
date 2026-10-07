@@ -1,5 +1,9 @@
 # ADLV Media Streamer desktop app
 
+```text
+Desktop app is currently under testing
+```
+
 This is a native Python window around the existing ADLV frontend. It loads the
 same frontend pages from the
 running FastAPI server, so the desktop app has the same visual design and uses

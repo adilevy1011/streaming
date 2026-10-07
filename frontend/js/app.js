@@ -42,7 +42,7 @@ function isTvShowPath(path) {
 }
 
 async function logout() {
-    logoutFromApi();
+    await logoutFromApi();
     redirectToLogin();
 }
 

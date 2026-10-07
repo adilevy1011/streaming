@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 try: 
@@ -32,21 +33,36 @@ def register() -> None:
                 api.supabase.auth.sign_in_with_password,
                 {"email": email, "password": payload.password},
             )
-            return api.session_response(session)
+            response = JSONResponse(api.session_response(session))
+            api.set_refresh_cookie(response, session)
+            return response
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=401, detail="Invalid email or password.") from exc
 
     @app.post("/api/auth/refresh")
-    def refresh(payload: api.RefreshRequest) -> dict[str, Any]:
+    def refresh(request: Request) -> Response:
+        refresh_token = request.cookies.get(api.REFRESH_COOKIE_NAME)
+        if not refresh_token:
+            return JSONResponse({"detail": "Refresh session required."}, status_code=401)
         try:
-            session = api.supabase.auth.refresh_session(payload.refresh_token)
-            return api.session_response(session)
+            session = api.supabase.auth.refresh_session(refresh_token)
+            response = JSONResponse(api.session_response(session))
+            api.set_refresh_cookie(response, session)
+            return response
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=401, detail="Unable to refresh session.") from exc
+            response = JSONResponse({"detail": "Unable to refresh session."}, status_code=401)
+            api.clear_refresh_cookie(response)
+            return response
+
+    @app.post("/api/auth/logout")
+    def logout() -> Response:
+        response = Response(status_code=204)
+        api.clear_refresh_cookie(response)
+        return response
 
     @app.get("/api/auth/session")
     def session(user: Any = Depends(api.current_user)) -> dict[str, Any]:

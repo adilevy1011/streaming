@@ -44,6 +44,7 @@ SUPABASE_ANON_KEY=<YOUR_SUPABASE_ANON_KEY>
 ALLOWED_EMAILS=<you@example.com>
 MEDIA_BUCKET=media
 CORS_ORIGINS=https://<YOUR_DOMAIN>
+AUTH_COOKIE_SECURE=true
 REDIS_URL=redis://localhost:6379/0
 ```
 
@@ -56,6 +57,7 @@ For local development:
 ```env
 ALLOWED_EMAILS=owner@example.com,viewer@example.com
 CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
+AUTH_COOKIE_SECURE=false
 REDIS_URL=redis://localhost:6379/0
 
 # Optional API rate-limit overrides (these are the defaults)

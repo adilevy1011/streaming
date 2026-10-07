@@ -17,6 +17,7 @@ The trusted maintenance workers are separate from the browser request path. They
 - Disallowed login attempts never reach Supabase Auth.
 - Access tokens are validated through Supabase Auth before protected routes continue.
 - The allowlist is checked again against the authenticated user's email after token validation.
+- Refresh tokens are issued only in an `HttpOnly` cookie and rotated by Supabase on refresh; the frontend never stores refresh tokens in `localStorage`.
 - Admin routes require the authenticated user's `admin_access` profile flag.
 - Media, subtitle, preview, progress, and watch-room routes require authentication.
 - Video and media-asset access is checked against the user's visible catalog before Storage is accessed.

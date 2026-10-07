@@ -34,6 +34,8 @@ API_RATE_WINDOW_SECONDS = int(os.environ.get("API_RATE_WINDOW_SECONDS", "60"))
 LOGIN_RATE_LIMIT = int(os.environ.get("LOGIN_RATE_LIMIT", "5"))
 LOGIN_RATE_WINDOW_SECONDS = int(os.environ.get("LOGIN_RATE_WINDOW_SECONDS", "60"))
 MAX_API_BODY_BYTES = int(os.environ.get("MAX_API_BODY_BYTES", str(2 * 1024 * 1024)))
+REFRESH_COOKIE_NAME = "adlv_media_refresh"
+REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 
 
 def parse_allowed_emails(value: str) -> set[str]:
@@ -46,6 +48,10 @@ def parse_allowed_emails(value: str) -> set[str]:
 ALLOWED_EMAILS = parse_allowed_emails(os.environ["ALLOWED_EMAILS"])
 ALLOW_ALL_EMAILS = ALLOWED_EMAILS == {"*"}
 CORS_ORIGINS = [origin.strip() for origin in os.environ["CORS_ORIGINS"].split(",") if origin.strip()]
+AUTH_COOKIE_SECURE = os.environ.get(
+    "AUTH_COOKIE_SECURE",
+    str(bool(CORS_ORIGINS) and all(origin.startswith("https://") for origin in CORS_ORIGINS)),
+).strip().casefold() == "true"
 if API_RATE_LIMIT <= 0 or API_RATE_WINDOW_SECONDS <= 0:
     raise RuntimeError("API_RATE_LIMIT and API_RATE_WINDOW_SECONDS must be greater than zero.")
 if LOGIN_RATE_LIMIT <= 0 or LOGIN_RATE_WINDOW_SECONDS <= 0:
@@ -61,7 +67,7 @@ app = FastAPI(title="adlv Media API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Range"],
     expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type"],
@@ -171,10 +177,6 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1, max_length=4096)
-
-
 class ProgressRequest(BaseModel):
     media_path: str = Field(min_length=1, max_length=1024)
     position_seconds: float = Field(ge=0)
@@ -223,7 +225,27 @@ def session_response(session: Any) -> dict[str, Any]:
     if not auth_session or not user:
         raise HTTPException(status_code=401, detail="Supabase did not return a valid session.")
     reject_unallowed(user.email or "")
-    return {"access_token": auth_session.access_token, "refresh_token": auth_session.refresh_token, "expires_in": auth_session.expires_in, "user": {"id": user.id, "email": user.email}}
+    return {"access_token": auth_session.access_token, "expires_in": auth_session.expires_in, "user": {"id": user.id, "email": user.email}}
+
+
+def set_refresh_cookie(response: Response, session: Any) -> None:
+    auth_session = getattr(session, "session", None) or session
+    refresh_token = getattr(auth_session, "refresh_token", None)
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Supabase did not return a refresh session.")
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        refresh_token,
+        max_age=REFRESH_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+        path="/api/auth",
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE_NAME, path="/api/auth", samesite="lax")
 
 
 def bearer_token(authorization: str | None) -> str:

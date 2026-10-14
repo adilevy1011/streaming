@@ -71,7 +71,7 @@ def register() -> None:
     @app.get("/api/profile")
     def profile(user: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> dict[str, Any]:
         params = {
-            "select": "user_id,subtitles_enabled,admin_access,new_videos_access",
+            "select": "user_id,subtitles_enabled,new_videos_access",
             "user_id": f"eq.{user.id}",
             "limit": "1",
         }
@@ -83,7 +83,7 @@ def register() -> None:
             "POST", "/rest/v1/profiles", token,
             headers={"Prefer": "return=representation"}, json=row,
         ) or []
-        return created[0] if created else {**row, "admin_access": False, "new_videos_access": True}
+        return created[0] if created else {**row, "new_videos_access": True}
 
     @app.patch("/api/profile")
     def update_profile(
@@ -98,13 +98,3 @@ def register() -> None:
             headers={"Prefer": "resolution=merge-duplicates,return=representation"}, json=row,
         ) or []
         return data[0] if data else row
-
-
-def admin_token(user: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> str:
-    data = api.supabase_request(
-        "GET", "/rest/v1/profiles", token,
-        params={"select": "admin_access", "user_id": f"eq.{user.id}", "limit": "1"},
-    ) or []
-    if not data or not data[0].get("admin_access"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
-    return token

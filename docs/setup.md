@@ -48,7 +48,7 @@ AUTH_COOKIE_SECURE=true
 REDIS_URL=redis://localhost:6379/0
 ```
 
-Redis must be reachable from the backend. The production service uses two Uvicorn workers, so Redis is required for Watch Together room state. Keep Redis bound to a private interface and do not expose port 6379 to the public internet.
+Keep Redis bound to a private interface and do not expose port 6379 to the public internet. The bundled production service uses one Uvicorn worker because resumable upload cursors are currently process-local. If you move those cursors to shared storage, you can scale workers and should configure Redis for shared Watch Together state and rate limits.
 
 The backend is intended to be reachable only through nginx on `127.0.0.1:8000`; it trusts nginx's `X-Real-IP` header for rate limiting. Do not expose the Uvicorn port publicly.
 
@@ -138,7 +138,7 @@ The service should use values like:
 ```ini
 WorkingDirectory=/var/www/media-streamer/backend
 EnvironmentFile=/etc/streaming/backend.env
-ExecStart=/var/www/media-streamer/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2
+ExecStart=/var/www/streaming/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 Install and start it:

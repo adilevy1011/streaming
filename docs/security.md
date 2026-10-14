@@ -18,7 +18,7 @@ The trusted maintenance workers are separate from the browser request path. They
 - Access tokens are validated through Supabase Auth before protected routes continue.
 - The allowlist is checked again against the authenticated user's email after token validation.
 - Refresh tokens are issued only in an `HttpOnly` cookie and rotated by Supabase on refresh; the frontend never stores refresh tokens in `localStorage`.
-- Admin routes require the authenticated user's `admin_access` profile flag.
+- Media playback routes use the authenticated user's Supabase token and database RLS policies.
 - Media, subtitle, preview, progress, and watch-room routes require authentication.
 - Video and media-asset access is checked against the user's visible catalog before Storage is accessed.
 - Supabase Row Level Security policies remain the database-level enforcement layer.
@@ -37,7 +37,7 @@ Default limits are:
 
 When `REDIS_URL` is configured, rate-limit counters are shared between workers. Without Redis, counters are process-local. Production deployments with multiple Uvicorn workers should configure Redis.
 
-The nginx configuration also applies `client_max_body_size 2m`, which protects requests before they reach FastAPI, including requests that do not provide a `Content-Length` header.
+The nginx configuration applies a 16 MiB `client_max_body_size`, which is above the browser's 8 MiB resumable upload chunks while FastAPI enforces the complete-file `MAX_UPLOAD_BYTES` limit.
 
 The limits can be changed with:
 
@@ -56,9 +56,9 @@ Before user-controlled values are used in Supabase requests, the backend validat
 - Email format and maximum length.
 - Password and refresh-token length.
 - Access-token length and control characters.
-- UUID format for administrative user identifiers.
+- UUID format for user identifiers.
 - Media-path length, traversal segments, backslashes, control characters, and PostgREST-special characters.
-- Admin email-list size and email values.
+- Email-list size and email values.
 - Progress and watch-room payload sizes and numeric ranges.
 
 The backend rejects oversized query strings, invalid content-length headers, control characters, directory traversal, and malformed identifiers locally.
@@ -71,9 +71,8 @@ Supabase request paths and selected fields are defined by the backend. User-cont
 - The media bucket is private.
 - Authenticated users cannot directly insert, update, or delete preview manifests or preview storage objects after migration `20260929130000_restrict_preview_writes.sql`.
 - Preview generation is performed by the trusted service-role worker.
-- Database tables use Row Level Security policies for user, admin, media, progress, and preview access.
+- Database tables use Row Level Security policies for user, media, progress, and preview access.
 - Profile and progress records are scoped to the authenticated user where applicable.
-- Administrative database functions enforce administrative access.
 - Supabase credentials are loaded from environment variables and should be stored in a protected environment file.
 
 ## Media and streaming protection
@@ -97,7 +96,7 @@ Supabase request paths and selected fields are defined by the backend. User-cont
 - WebSocket messages have a size limit.
 - Playback commands are rate-limited per connection.
 - Duplicate command identifiers are ignored.
-- Watch-room state can use Redis for shared state and expiry across workers.
+- Watch-room state can use Redis for shared state and expiry across workers. Resumable upload cursors are currently process-local, so the bundled deployment uses one worker.
 
 ## nginx deployment controls
 

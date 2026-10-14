@@ -78,6 +78,21 @@ async function requestOnce(path, options = {}) {
     return response.status === 204 ? null : response.json();
 }
 
+async function authenticatedFetch(url, options = {}, allowRefresh = true) {
+    const headers = new Headers(options.headers || {});
+    const token = getAccessToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(url, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
+    if (response.status === 401 && allowRefresh) {
+        await refreshApiSession();
+        const retryHeaders = new Headers(options.headers || {});
+        const refreshedToken = getAccessToken();
+        if (refreshedToken) retryHeaders.set('Authorization', `Bearer ${refreshedToken}`);
+        return fetch(url, { ...options, headers: retryHeaders, credentials: 'same-origin', cache: 'no-store' });
+    }
+    return response;
+}
+
 async function apiRequest(path, options = {}, allowRefresh = true) {
     try {
         return await requestOnce(path, options);
@@ -105,8 +120,6 @@ async function refreshApiSession() {
                 method: 'POST'
             }, false));
         } catch (error) {
-            // A transient/network failure must not sign the user out. Only a
-            // server rejection of the refresh token proves the session ended.
             if (error.status === 401) clearSession();
             throw error;
         } finally {

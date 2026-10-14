@@ -33,7 +33,7 @@ Folders that contain no supported video files do not become tabs.
 
 Every folder has a stored playback order for its direct videos and subfolders. Playback recursively enters a folder, plays all of its videos, then continues with the next item after that folder in the parent order. New items are inserted using a number immediately before the extension when available; otherwise they are inserted alphabetically without reordering existing items.
 
-Administrators can open **Admin Actions**, choose a folder under **Folder playback order**, drag its items into the desired order, and save. At the end of a video, **Play next** shows the next permitted video and its matching preview image when available. Videos hidden from a user are skipped. The final video shows **Back to library** instead.
+The media manager can choose a folder under **Playback order**, drag its items into the desired order, and save. At the end of a video, **Play next** shows the next permitted video and its matching preview image when available. Videos hidden from a user are skipped. The final video shows **Back to library** instead.
 
 ## Subtitles
 
@@ -69,15 +69,9 @@ Folder artwork is inherited from the folder’s parent listing and is shown only
 
 Artwork is cached for faster loading. The application checks the bucket’s current image timestamp and automatically refreshes cached artwork when the image changes.
 
-## Admin access and video permissions
+## Video permissions
 
-The admin feature controls which authenticated users can see and play individual videos. It is implemented at both the Supabase database layer and the application API layer, so hiding a video from the library also prevents a user from opening it by guessing its storage path.
-
-### Enabling an administrator
-
-The `public.profiles` table includes an `admin_access` boolean column. It defaults to `false` for all existing and newly created profiles. Users cannot change this column through the normal profile API.
-
-Promote an account to admin by changing its `admin_access` column to `true`.
+The media manager controls which authenticated users can see and play individual videos. Visibility is enforced at the Supabase database layer and by the application media API, so hiding a video from the library also prevents a user from opening it by guessing its storage path.
 
 ### Controlling video access
 
@@ -85,29 +79,28 @@ The `public.videos` table includes a `user_access text[]` column. The value is a
 
 - An empty list (`{}`) means the video follows each profile's `new_videos_access` setting.
 - A non-empty list means only users whose email appears in that list can view and play the video.
-- Emails are normalized to lowercase by the admin API.
-- Admins always have access, regardless of `user_access`, as long as their profile has `admin_access = true`.
+- Emails are normalized to lowercase by the media manager.
 
 The `public.profiles` table also includes `new_videos_access`, which defaults to `true`. This controls access to videos whose `user_access` list is empty:
 
 - When `new_videos_access` is `true`, the user automatically sees new videos that have no specific allowlist.
 - When it is `false`, the user does not see those videos unless their email is explicitly added to a video's `user_access` list.
 
-Administrators can change this setting from the Admin Actions panel by selecting a user and toggling **Automatically allow new videos**. It is saved together with any pending video permission changes. Admin users always retain access to all videos, and are also included in every explicit video allowlist so their explicitly granted access survives removal of admin status.
+The media manager can change this setting by selecting a user and toggling **Automatically allow new videos**. It is saved together with pending video permission changes.
 
-To manage permissions in the application, sign in as an administrator and click **Admin Actions** next to **Refresh library**. The panel shows every Auth user and every cataloged video. Select a user to see their effective access, then check or uncheck videos and hit save.
+To manage permissions, open the media manager. It shows every Auth user and every cataloged video. Select a user to see their effective access, then check or uncheck videos and save.
 
 When an unrestricted video is deselected for one user, the application converts it into an allowlist containing the other users. This preserves the unrestricted-by-default behavior while allowing that user to be removed from the video.
 
 ### Security model
 
-The database uses a `public.is_admin()` security-definer function and row-level security policies on `public.videos`. Authenticated users can only select permitted video rows, while administrators can select all video rows and update `user_access`.
+The database uses row-level security policies on `public.videos`. Authenticated users can only select permitted video rows.
 
-The admin user list is returned through a restricted database function because `auth.users` is not directly readable by normal authenticated clients. It exposes only the user ID, email, admin status, and new-video access setting needed by the admin panel.
+The media manager reads the Auth user list through its trusted Supabase connection and uses the user ID, email, and new-video access setting needed for permission management.
 
 The backend also checks access before serving video files, subtitles, poster images, folder artwork, and generated preview sheets. This second check protects media even when a user has a direct or previously cached media URL.
 
-No `SERVICE_ROLE` key is required for this implementation. Administrator promotion should still be performed through the Supabase dashboard or another trusted database connection, never through a client-controlled request.
+The media manager keeps its secret key local and never exposes it to the browser.
 
 
 

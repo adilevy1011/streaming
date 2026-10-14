@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import math
 import os
 import sys
@@ -15,21 +16,23 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import cv2
-import easyocr
 import numpy as np
 
+# EasyOCR/PyTorch currently trigger these dependency warnings while importing
+# or constructing the OCR reader. They are expected on CPU-only installs and
+# do not indicate a problem with credit detection.
 warnings.filterwarnings(
     "ignore",
-    message=r"torch\.quantize_per_tensor.*deprecated",
+    message=r"torch\.quantize_per_(?:tensor|channel).*deprecated",
     category=UserWarning,
-    module=r"torch\.ao\.nn\.quantized\.dynamic\.modules\.rnn",
 )
 warnings.filterwarnings(
     "ignore",
     message=r"'pin_memory' argument is set as true but no accelerator is found.*",
     category=UserWarning,
-    module=r"torch\.utils\.data\.dataloader",
 )
+
+import easyocr
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO_EXTENSIONS = {"mp4", "m4v", "webm", "mov", "mkv", "avi", "ogv", "mpeg", "mpg", "ts"}
@@ -472,6 +475,9 @@ def process_video(preview: dict) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--video", help="Detect credits for one video path only")
+    args = parser.parse_args()
     print("[*] Loading preview manifests and reconciling existing credit rows...")
     model, _ = get_credit_model()
     if model is None:
@@ -481,7 +487,13 @@ def main() -> int:
     try:
         manifests = fetch_preview_manifests()
         video_paths = list_video_paths()
-        cleanup_stale_credit_records(video_paths)
+        if args.video:
+            if args.video not in video_paths:
+                print(f"[{RED}!{RESET}] Video not found: {args.video}", file=sys.stderr)
+                return 2
+            manifests = [row for row in manifests if row.get("media_path") == args.video]
+        else:
+            cleanup_stale_credit_records(video_paths)
         existing_credit_paths = fetch_credit_paths() & video_paths
     except Exception as error:
         print(f"[{RED}!{RESET}] Failed to reconcile Supabase state: {error}", file=sys.stderr)

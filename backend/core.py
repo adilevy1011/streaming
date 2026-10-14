@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import time
-import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -132,14 +131,6 @@ def validate_media_path(value: str) -> str:
     return normalized
 
 
-def validate_uuid(value: str, field: str = "identifier") -> str:
-    value = validate_text(value, field, 36)
-    try:
-        return str(uuid.UUID(value))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}.") from exc
-
-
 def rate_limit_bucket(path: str) -> tuple[str, int, int]:
     return ("login", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS) if path == "/api/auth/login" else ("api", API_RATE_LIMIT, API_RATE_WINDOW_SECONDS)
 
@@ -199,18 +190,6 @@ class WatchCommand(BaseModel):
 
 class ProfileRequest(BaseModel):
     subtitles_enabled: bool
-
-
-class AdminVideoAccessRequest(BaseModel):
-    user_access: list[str] = Field(max_length=500)
-
-
-class AdminNewVideosAccessRequest(BaseModel):
-    new_videos_access: bool
-
-
-class FolderOrderingRequest(BaseModel):
-    item_paths: list[str] = Field(max_length=5000)
 
 
 def reject_unallowed(email: str) -> None:

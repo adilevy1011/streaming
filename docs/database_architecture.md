@@ -25,7 +25,7 @@ public.video_credits   <-- detected credit ranges, keyed by source video
 
 `media_path` and `path` contain Storage object paths and are the canonical media identifiers. They are intentionally not foreign keys to `storage.objects`: Storage is managed outside the public schema, and one source video can have multiple related preview objects.
 
-Storage triggers keep the catalog synchronized with uploads, updates, renames, and deletes. A source-video delete also removes its related catalog, progress, preview, and credit rows.
+Storage triggers keep the catalog synchronized with uploads, updates, renames, and deletes. Renames also run a transactional path-rewrite RPC so progress, previews, credits, folder playback order, related assets, and video access lists follow file and folder paths. A source-video delete removes its related catalog, progress, preview, and credit rows.
 
 ## Catalog tables
 
@@ -64,11 +64,11 @@ This is the application-facing video index. Each row represents one source video
 | `preview_image_updated_at` | `timestamptz` | Matching artwork update time |
 | `user_access` | `text[]` | Optional lower-case email allowlist |
 
-Video visibility is enforced by RLS. Administrators can read and update video access lists. Other authenticated users can read a row when their email is explicitly listed, or when the list is empty and their profile permits access to new videos. Administrators bypass these restrictions. A trigger normalizes explicit lists and keeps current administrators included in non-empty lists.
+Video visibility is enforced by RLS. Authenticated users can read a row when their email is explicitly listed, or when the list is empty and their profile permits access to new videos. Explicit lists are normalized by the database.
 
 ### `public.folder_orderings`
 
-Each row represents a virtual folder path, including nested folders and the empty library root. `item_paths` stores the ordered direct videos and child-folder paths. `ordered_video_paths` stores the recursively flattened depth-first playback sequence used by the watch API. Storage catalog triggers preserve existing order, insert new items by numeric filename suffix or alphabetically, and refresh affected ancestor folders. Administrators can reorder direct items from **Admin Actions**.
+Each row represents a virtual folder path, including nested folders and the empty library root. `item_paths` stores the ordered direct videos and child-folder paths. `ordered_video_paths` stores the recursively flattened depth-first playback sequence used by the watch API. Storage catalog triggers preserve existing order, insert new items by numeric filename suffix or alphabetically, and refresh affected ancestor folders. The media manager can reorder direct items.
 
 ## User and playback tables
 
@@ -80,10 +80,9 @@ One row per Supabase Auth user. Rows are created for new Auth users and existing
 | --- | --- | --- | --- |
 | `user_id` | `uuid` | — | Primary key and cascading FK to `auth.users(id)` |
 | `subtitles_enabled` | `boolean` | `false` | User subtitle preference |
-| `admin_access` | `boolean` | `false` | Grants administrator capabilities |
 | `new_videos_access` | `boolean` | `true` | Allows videos with an empty `user_access` list |
 
-Users can read and change their own subtitle preference. They cannot promote themselves or change another user’s access settings. Administrators can read profiles and manage `new_videos_access`; administrator promotion is a trusted database/admin operation.
+Users can read and change their own subtitle preference. The media manager uses its trusted database connection to manage other users’ `new_videos_access` settings.
 
 ### `public.video_progress`
 
@@ -156,6 +155,6 @@ The catalog is maintained by database functions and triggers on `storage.objects
 - RLS is enabled on all application tables in `public`; an event trigger enables it for subsequently created public tables.
 - Application access is authenticated through Supabase Auth. The anonymous role has no application-table grants.
 - Profiles and playback rows are user-scoped with `auth.uid()` checks.
-- Video visibility is controlled by `admin_access`, `new_videos_access`, and `videos.user_access`.
+- Video visibility is controlled by `new_videos_access` and `videos.user_access`.
 - Preview metadata is readable and writable by authenticated users for the fallback worker; credit metadata is readable by authenticated users and written by trusted services.
 - Storage remains private, and generated-object write policies are limited to `__previews/`.

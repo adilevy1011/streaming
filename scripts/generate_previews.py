@@ -309,6 +309,7 @@ def generate_video(media_path: str, previous: dict | None, force: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true", help="Regenerate and overwrite every sheet")
+    parser.add_argument("--video", help="Generate previews for one video path only")
     args = parser.parse_args()
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         print("ERROR: ffmpeg and ffprobe must be installed and available on PATH", file=sys.stderr)
@@ -321,8 +322,14 @@ def main() -> int:
 
     rows = preview_rows()
     videos = list_video_paths()
+    if args.video:
+        if args.video not in videos:
+            print(f"ERROR: video not found: {args.video}", file=sys.stderr)
+            return 2
+        videos = [args.video]
     log(f"Found {len(videos)} video(s)")
-    cleanup_stale_previews(rows, set(videos))
+    if not args.video:
+        cleanup_stale_previews(rows, set(videos))
     complete = {path for path, row in rows.items() if manifest_is_complete(row)}
     for media_path in videos:
         if not args.force and media_path in complete:

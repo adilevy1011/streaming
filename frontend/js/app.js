@@ -13,7 +13,6 @@ let activeProgressByPath = new Map();
 let mediaRenderScheduled = false;
 let mediaLoadAbortController = null;
 let refreshMessageTimer = null;
-let adminAccess = false;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
 const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
 const TV_SHOW_ROOT_NAMES = new Set(['shows', 'show', 'tv shows', 'tv-shows', 'tvshows', 'series', 'tv']);
@@ -108,17 +107,9 @@ async function checkAuth() {
         return null;
     }
     currentUserId = session?.user?.id || '';
-    adminAccess = false;
-    if (session) {
-        try { adminAccess = !!(await apiRequest('/profile')).admin_access; }
-        catch (error) { console.warn('Unable to load profile access', error); }
-    }
     document.getElementById('stream-section').classList.toggle('hidden', !session);
     document.getElementById('logout-button').classList.toggle('hidden', !session);
     document.getElementById('refresh-library-button').classList.toggle('hidden', !session);
-    const adminLink = document.getElementById('admin-actions-button');
-    adminLink.href = window.location.protocol === 'file:' ? 'admin-actions.html' : '/admin-actions';
-    adminLink.classList.toggle('hidden', !session || !adminAccess);
     if (session) {
         showLibrary('my-library');
         loadMedia();

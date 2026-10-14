@@ -1,4 +1,4 @@
-"""Media, progress, and administration HTTP routes."""
+"""Media and progress HTTP routes."""
 
 import os
 import subprocess
@@ -16,7 +16,6 @@ try:
     import core as api
 except ImportError:
     from .. import core as api
-from .auth_routes import admin_token
 
 TV_SHOW_ROOT_NAMES = {"shows", "show", "tv shows", "tv-shows", "tvshows", "series", "tv"}
 
@@ -36,24 +35,13 @@ def register() -> None:
         if path not in visible_by_path:
             return None
         root_folder = path.split("/", 1)[0] if "/" in path else ""
-        ordering_rows = api.supabase_request(
-            "GET",
-            "/rest/v1/folder_orderings",
-            token,
-            params={"select": "ordered_video_paths", "folder_path": f"eq.{root_folder}", "limit": "1"},
-        ) or []
+        ordering_rows = api.supabase_request("GET", "/rest/v1/folder_orderings", token, params={"select": "ordered_video_paths", "folder_path": f"eq.{root_folder}", "limit": "1"}) or []
         ordered_paths = ordering_rows[0].get("ordered_video_paths") or [] if ordering_rows else []
         try:
             current_index = ordered_paths.index(path)
         except ValueError:
             return None
-
-        progress_rows = api.supabase_request(
-            "GET",
-            "/rest/v1/video_progress",
-            token,
-            params={"select": "media_path,started,completed", "user_id": f"eq.{user_id}"},
-        ) or []
+        progress_rows = api.supabase_request("GET", "/rest/v1/video_progress", token, params={"select": "media_path,started,completed", "user_id": f"eq.{user_id}"}) or []
         progress_by_path = {row.get("media_path"): row for row in progress_rows}
         for candidate_path in ordered_paths[current_index + 1:]:
             if candidate_path not in visible_by_path:
@@ -122,40 +110,6 @@ def register() -> None:
         rows = api.supabase_request("GET", f"/rest/v1/video_previews?select={select}", token) or []
         return [row for row in rows if row.get("media_path") in visible]
 
-    @app.get("/api/admin/users")
-    def admin_users(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
-        return api.supabase_request("POST", "/rest/v1/rpc/admin_list_users", token, json={}) or []
-
-    @app.patch("/api/admin/user-access")
-    def update_admin_user_access(payload: api.AdminNewVideosAccessRequest, user_id: str = Query(..., min_length=1), token: str = Depends(admin_token)) -> dict[str, Any]:
-        user_id = api.validate_uuid(user_id, "user id")
-        try:
-            data = api.supabase_request("POST", "/rest/v1/rpc/admin_set_new_videos_access", token, json={"target_user_id": user_id, "enabled": payload.new_videos_access}) or []
-        except HTTPException:
-            data = api.supabase_request("PATCH", "/rest/v1/profiles", token, params={"user_id": f"eq.{user_id}", "select": "user_id,admin_access,new_videos_access"}, headers={"Prefer": "return=representation"}, json={"new_videos_access": payload.new_videos_access}) or []
-        if not data:
-            data = api.supabase_request("GET", "/rest/v1/profiles", token, params={"select": "user_id,admin_access,new_videos_access", "user_id": f"eq.{user_id}", "limit": "1"}) or []
-        if not data:
-            raise HTTPException(status_code=404, detail="Profile not found.")
-        if data[0].get("new_videos_access") != payload.new_videos_access:
-            raise HTTPException(status_code=403, detail="Unable to update new video access.")
-        return data[0]
-
-    @app.get("/api/admin/videos")
-    def admin_videos(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
-        return api.supabase_request("GET", "/rest/v1/videos", token, params={"select": "path,name,user_access", "order": "path.asc"}) or []
-
-    @app.patch("/api/admin/video-access")
-    def update_admin_video_access(payload: api.AdminVideoAccessRequest, path: str = Query(..., min_length=1), token: str = Depends(admin_token)) -> dict[str, Any]:
-        path = api.validate_media_path(path)
-        emails = sorted({email.strip().casefold() for email in payload.user_access if email.strip()})
-        if any(not api.EMAIL_PATTERN.fullmatch(api.validate_text(email, "email", 320)) for email in emails):
-            raise HTTPException(status_code=400, detail="Invalid email in user access list.")
-        data = api.supabase_request("PATCH", "/rest/v1/videos", token, params={"path": f"eq.{path}", "select": "path,name,user_access"}, headers={"Prefer": "return=representation"}, json={"user_access": emails}) or []
-        if not data:
-            raise HTTPException(status_code=404, detail="Video not found.")
-        return data[0]
-
     @app.get("/api/media/next")
     def next_media(path: str = Query(..., min_length=1), _: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> dict[str, Any] | None:
         safe_path = api.validate_media_path(path)
@@ -183,28 +137,7 @@ def register() -> None:
 
     @app.get("/api/media/folder-orderings")
     def media_folder_orderings(_: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> list[dict[str, Any]]:
-        return api.supabase_request(
-            "GET",
-            "/rest/v1/folder_orderings",
-            token,
-            params={"select": "folder_path,item_paths,ordered_video_paths", "order": "folder_path.asc"},
-        ) or []
-
-    @app.get("/api/admin/folder-orderings")
-    def admin_folder_orderings(token: str = Depends(admin_token)) -> list[dict[str, Any]]:
-        return api.supabase_request("GET", "/rest/v1/folder_orderings", token, params={"select": "folder_path,item_paths,ordered_video_paths,updated_at", "order": "folder_path.asc"}) or []
-
-    @app.patch("/api/admin/folder-ordering")
-    def update_admin_folder_ordering(payload: api.FolderOrderingRequest, folder_path: str = Query(default=""), token: str = Depends(admin_token)) -> dict[str, Any]:
-        folder_path = api.validate_media_path(folder_path) if folder_path else ""
-        item_paths = [api.validate_media_path(item) for item in payload.item_paths]
-        if len(item_paths) != len(set(item_paths)):
-            raise HTTPException(status_code=400, detail="Folder ordering contains duplicate items.")
-        api.supabase_request("POST", "/rest/v1/rpc/admin_update_folder_ordering", token, json={"target_folder": folder_path, "new_items": item_paths})
-        rows = api.supabase_request("GET", "/rest/v1/folder_orderings", token, params={"select": "folder_path,item_paths,ordered_video_paths,updated_at", "folder_path": f"eq.{folder_path}", "limit": "1"}) or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="Folder ordering not found.")
-        return rows[0]
+        return api.supabase_request("GET", "/rest/v1/folder_orderings", token, params={"select": "folder_path,item_paths,ordered_video_paths", "order": "folder_path.asc"}) or []
 
     @app.get("/api/progress")
     def progress(user: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> list[dict[str, Any]]:
@@ -219,27 +152,9 @@ def register() -> None:
         if payload.completed:
             next_path = next_tv_placeholder(payload.media_path, user.id, token)
             if next_path:
-                existing = api.supabase_request(
-                    "GET",
-                    "/rest/v1/video_progress",
-                    token,
-                    params={"select": "media_path", "user_id": f"eq.{user.id}", "media_path": f"eq.{next_path}", "limit": "1"},
-                ) or []
+                existing = api.supabase_request("GET", "/rest/v1/video_progress", token, params={"select": "media_path", "user_id": f"eq.{user.id}", "media_path": f"eq.{next_path}", "limit": "1"}) or []
                 if not existing:
-                    api.supabase_request(
-                        "POST",
-                        "/rest/v1/video_progress",
-                        token,
-                        params={"on_conflict": "user_id,media_path"},
-                        json={
-                            "user_id": user.id,
-                            "media_path": next_path,
-                            "position_seconds": 0,
-                            "duration_seconds": None,
-                            "completed": False,
-                            "started": False,
-                        },
-                    )
+                    api.supabase_request("POST", "/rest/v1/video_progress", token, params={"on_conflict": "user_id,media_path"}, json={"user_id": user.id, "media_path": next_path, "position_seconds": 0, "duration_seconds": None, "completed": False, "started": False})
         return (data or [row])[0]
 
     @app.delete("/api/progress")

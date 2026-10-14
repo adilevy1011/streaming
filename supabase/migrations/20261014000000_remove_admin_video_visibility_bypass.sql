@@ -9,6 +9,7 @@ drop policy if exists "Admins can read profiles" on public.profiles;
 drop policy if exists "Admins can update new video access" on public.profiles;
 drop policy if exists "Admins can update video access" on public.videos;
 drop policy if exists "Admins can manage folder orderings" on public.folder_orderings;
+drop policy if exists "Users can read permitted videos" on public.videos;
 
 drop function if exists public.admin_list_users();
 drop function if exists public.admin_set_new_videos_access(uuid, boolean);

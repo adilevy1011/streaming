@@ -205,6 +205,26 @@ function attemptLocalPlayback() {
     if (!ready || !started) { statusElement.innerText = 'Press “I’m ready” before controlling playback.'; return; }
     if (player.paused) player.play().catch(() => {}); else player.pause();
 }
+function handlePlayerKeyboard(event) {
+    if (event.repeat || event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (event.code === 'Space') {
+        event.preventDefault();
+        attemptLocalPlayback();
+        return;
+    }
+    if (event.code !== 'ArrowLeft' && event.code !== 'ArrowRight') return;
+    event.preventDefault();
+    if (!ready || !started) {
+        statusElement.innerText = 'Press “I’m ready” before controlling playback.';
+        return;
+    }
+    const offset = event.code === 'ArrowRight' ? 10 : -10;
+    const duration = Number.isFinite(player.duration) ? player.duration : Infinity;
+    const position = Math.max(0, Math.min(duration, (player.currentTime || 0) + offset));
+    player.currentTime = position;
+    sendCommand('seek', { position });
+}
+document.addEventListener('keydown', handlePlayerKeyboard);
 playToggle.onclick = attemptLocalPlayback;
 videoFrame.onclick = event => { if (!event.target.closest('.timeline-shell, .player-back-button')) attemptLocalPlayback(); };
 player.addEventListener('play', () => { updateControls(); sendCommand('play'); });

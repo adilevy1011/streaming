@@ -7,6 +7,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+try:
+    from .directory_autocomplete import DirectoryAutocomplete
+except ImportError:
+    from directory_autocomplete import DirectoryAutocomplete
+
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"}
 
 
@@ -27,7 +32,7 @@ class ScriptRunnerMixin:
         folder_var = tk.StringVar(value=getattr(self, "script_runner_folder", self.upload_path)); self.script_runner_folder_var = folder_var
         folder_row = tk.Frame(body, bg="white"); folder_row.pack(fill="x", pady=(4, 20))
         folder_options = sorted({"", self.upload_path, *[item["path"] for item in self.upload_items if item["type"] == "folder"]})
-        ttk.Combobox(folder_row, textvariable=folder_var, values=folder_options, width=52).pack(side="left", fill="x", expand=True); ttk.Button(folder_row, text="Choose...", command=lambda: self.open_script_folder_picker(window, folder_var)).pack(side="left", padx=(8, 0))
+        DirectoryAutocomplete(folder_row, api=self.api, initial_values=folder_options, textvariable=folder_var, width=52).pack(side="left", fill="x", expand=True); ttk.Button(folder_row, text="Choose...", command=lambda: self.open_script_folder_picker(window, folder_var)).pack(side="left", padx=(8, 0))
         status = tk.Label(body, text="Ready", bg="white", fg="#667085", anchor="w"); status.pack(fill="x", pady=(0, 7)); progress = ttk.Progressbar(body, mode="determinate", maximum=1); progress.pack(fill="x")
         self.script_runner_status = status; self.script_runner_progress = progress
         actions = tk.Frame(body, bg="white"); actions.pack(fill="x", pady=(22, 0)); detail_button = ttk.Button(actions, text="Show detail", command=self.open_script_detail, state="disabled"); detail_button.pack(side="left"); start_button = ttk.Button(actions, text="Run script", style="Primary.TButton"); start_button.pack(side="right"); ttk.Button(actions, text="Close", command=window.withdraw).pack(side="right", padx=(0, 8))

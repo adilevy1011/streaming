@@ -16,3 +16,6 @@ local/
 # MobileNet Trainer
 data/*
 scripts/model_trainer/*
+
+# Binary files
+dist/

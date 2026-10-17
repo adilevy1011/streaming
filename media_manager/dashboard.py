@@ -41,7 +41,7 @@ class MediaManager(PermissionsViewMixin, OrderingViewMixin, UploadsViewMixin, Up
     def __init__(self, api: Supabase, config: dict[str, str]):
         super().__init__(); self.api, self.config = api, config; self.title("ADLV Media Manager"); self.geometry("1180x760"); self.minsize(940, 600); self.configure(bg=self.BG); self.protocol("WM_DELETE_WINDOW", self.handle_close)
         try:
-            self._app_icon = tk.PhotoImage(file=Path(__file__).resolve().parent / "app_icon.png")
+            self._app_icon = tk.PhotoImage(file=Path(__file__).resolve().parent / "icons" / "app_icon.png")
             self.iconphoto(True, self._app_icon)
         except tk.TclError:
             self._app_icon = None

@@ -2,16 +2,72 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from io import BytesIO
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 try:
+    import cairosvg
+    from PIL import Image, ImageTk
+except (ImportError, OSError):
+    cairosvg = Image = ImageTk = None
+
+try:
     from .supabase_client import UploadCancelled, UploadPaused
+    from .directory_autocomplete import DirectoryAutocomplete
 except ImportError:
     from supabase_client import UploadCancelled, UploadPaused
+    from directory_autocomplete import DirectoryAutocomplete
 
 
 class UploadActionsMixin:
+    def _upload_queue_icon(self, name):
+        """Load one of the queue SVGs as a Tk image and keep it alive."""
+        icons = getattr(self, "upload_queue_icons", None)
+        if icons is None:
+            icons = self.upload_queue_icons = {}
+        if name in icons:
+            return icons[name]
+        if cairosvg is None or ImageTk is None:
+            return None
+        icon_path = Path(__file__).with_name("icons") / f"{name}.svg"
+        try:
+            png = cairosvg.svg2png(url=str(icon_path), output_width=20, output_height=20)
+            icons[name] = ImageTk.PhotoImage(Image.open(BytesIO(png)).convert("RGBA"))
+        except Exception:
+            return None
+        return icons[name]
+
+    def _queue_icon_label(self, parent, icon_name, status):
+        image = self._upload_queue_icon(icon_name)
+        label = tk.Label(parent, image=image, text="" if image else status, width=3 if image else 12, anchor="w", fg="#667085")
+        if image:
+            label.image = image
+        label.bind("<Enter>", lambda _event: self._show_queue_tooltip(label, status))
+        label.bind("<Leave>", lambda _event: self._hide_queue_tooltip())
+        return label
+
+    def _show_queue_tooltip(self, widget, text):
+        self._hide_queue_tooltip()
+        self._queue_tooltip = tk.Toplevel(widget)
+        self._queue_tooltip.wm_overrideredirect(True)
+        self._queue_tooltip.wm_geometry(f"+{widget.winfo_rootx() + 24}+{widget.winfo_rooty() + 18}")
+        tk.Label(self._queue_tooltip, text=text, bg="#101828", fg="white", padx=6, pady=3).pack()
+
+    def _hide_queue_tooltip(self):
+        tooltip = getattr(self, "_queue_tooltip", None)
+        if tooltip and tooltip.winfo_exists():
+            tooltip.destroy()
+
+    def _queue_action_button(self, parent, icon_name, label, command, state="normal"):
+        image = self._upload_queue_icon(icon_name)
+        button = ttk.Button(parent, image=image, text="" if image else label, compound="center", width=3 if image else 8, command=command, state=state)
+        if image:
+            button.image = image
+        button.bind("<Enter>", lambda _event: self._show_queue_tooltip(button, label))
+        button.bind("<Leave>", lambda _event: self._hide_queue_tooltip())
+        return button
+
     def create_upload_folder(self):
         name = simpledialog.askstring("New folder", "Folder name:", parent=self)
         if not name: return
@@ -46,7 +102,7 @@ class UploadActionsMixin:
         folder_options = sorted({self.upload_path, *[item["path"] for item in self.upload_items if item["type"] == "folder"]})
         rows = []
         for file_path in files:
-            row = tk.Frame(scrollable); row.pack(fill="x", pady=3); tk.Label(row, text=file_path.name, width=30, anchor="w").pack(side="left"); name = tk.StringVar(value=file_path.name); folder = tk.StringVar(value=self.upload_path); ttk.Entry(row, textvariable=name, width=25).pack(side="left", padx=8); ttk.Combobox(row, textvariable=folder, values=folder_options, width=35).pack(side="left"); tk.Button(row, text="Choose...", command=lambda index=len(rows): self.open_folder_picker(window, rows, index, same_folder)).pack(side="left", padx=6); rows.append({"path": file_path, "name": name, "folder": folder})
+            row = tk.Frame(scrollable); row.pack(fill="x", pady=3); tk.Label(row, text=file_path.name, width=30, anchor="w").pack(side="left"); name = tk.StringVar(value=file_path.name); folder = tk.StringVar(value=self.upload_path); ttk.Entry(row, textvariable=name, width=25).pack(side="left", padx=8); folder_input = DirectoryAutocomplete(row, api=self.api, initial_values=folder_options, textvariable=folder, width=35); folder_input.pack(side="left"); tk.Button(row, text="Choose...", command=lambda index=len(rows): self.open_folder_picker(window, rows, index, same_folder)).pack(side="left", padx=6); rows.append({"path": file_path, "name": name, "folder": folder})
         for index, row in enumerate(rows): row["folder"].trace_add("write", lambda *_args, current=index: self.staging_folder_changed(rows, current, same_folder))
         actions = tk.Frame(window); actions.pack(fill="x", padx=18, pady=16); ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right", padx=(8, 0)); ttk.Button(actions, text="Start uploads", style="Primary.TButton", command=lambda: self.confirm_staged_uploads(window, rows)).pack(side="right")
 
@@ -176,18 +232,28 @@ class UploadActionsMixin:
             row.pack(fill="x", pady=3)
             row.grid_columnconfigure(0, weight=1)
             tk.Label(row, text=item["path"].name, anchor="w").grid(row=0, column=0, sticky="ew")
-            tk.Label(row, text=item["status"], width=12, anchor="w", fg="#667085").grid(row=0, column=1, padx=10)
+            status_icons = {
+                "Queued": "queued",
+                "Uploading": "uploading",
+                "Pausing...": "stop",
+                "Paused": "stop",
+                "Removing...": "remove",
+                "Complete": "task-complete",
+                "Failed": "error",
+            }
+            status_label = self._queue_icon_label(row, status_icons.get(item["status"], "error"), item["status"])
+            status_label.grid(row=0, column=1, padx=10)
             progress = ttk.Progressbar(row, mode="determinate", maximum=100, value=item["progress"], length=180)
             progress.grid(row=0, column=2, padx=8)
             tk.Label(row, text=f"{item['progress']}%", width=5, anchor="e").grid(row=0, column=3)
             if item["status"] in {"Queued", "Uploading"}:
-                ttk.Button(row, text="Pause", command=lambda upload_id=item["id"]: self.pause_upload(upload_id)).grid(row=0, column=4, padx=(12, 4))
+                self._queue_action_button(row, "stop", "Pause", lambda upload_id=item["id"]: self.pause_upload(upload_id)).grid(row=0, column=4, padx=(12, 4))
             elif item["status"] == "Paused":
-                ttk.Button(row, text="Resume", command=lambda upload_id=item["id"]: self.resume_upload(upload_id)).grid(row=0, column=4, padx=(12, 4))
+                self._queue_action_button(row, "start", "Resume", lambda upload_id=item["id"]: self.resume_upload(upload_id)).grid(row=0, column=4, padx=(12, 4))
             else:
                 tk.Frame(row, width=68).grid(row=0, column=4, padx=(12, 4))
             remove_state = "disabled" if item["status"] in {"Pausing...", "Removing..."} else "normal"
-            ttk.Button(row, text="Remove", state=remove_state, command=lambda upload_id=item["id"]: self.remove_upload(upload_id)).grid(row=0, column=5)
+            self._queue_action_button(row, "remove", "Remove", lambda upload_id=item["id"]: self.remove_upload(upload_id), remove_state).grid(row=0, column=5)
 
     def _queue_item(self, upload_id):
         return next((item for item in self.upload_queue if item["id"] == upload_id), None)

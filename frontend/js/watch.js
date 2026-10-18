@@ -849,6 +849,25 @@ playToggle.addEventListener('click', () => {
     else if (player.paused) player.play().catch(() => {});
     else player.pause();
 });
+function handlePlayerKeyboard(event) {
+    if (event.repeat || event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (event.code === 'Space') {
+        event.preventDefault();
+        if (roomId) toggleRoomPlayback();
+        else if (player.paused) player.play().catch(() => {});
+        else player.pause();
+        return;
+    }
+    if (event.code !== 'ArrowLeft' && event.code !== 'ArrowRight') return;
+    event.preventDefault();
+    const offset = event.code === 'ArrowRight' ? 10 : -10;
+    const duration = Number.isFinite(player.duration) ? player.duration : Infinity;
+    const position = Math.max(0, Math.min(duration, (player.currentTime || 0) + offset));
+    player.currentTime = position;
+    if (roomId) sendRoomCommand('seek', position);
+    else saveCurrentProgress();
+}
+document.addEventListener('keydown', handlePlayerKeyboard);
 muteToggle.addEventListener('click', () => {
     player.muted = !player.muted;
     updatePlayerControls();

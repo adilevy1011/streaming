@@ -25,7 +25,7 @@ public.video_credits   <-- detected credit ranges, keyed by source video
 
 `media_path` and `path` contain Storage object paths and are the canonical media identifiers. They are intentionally not foreign keys to `storage.objects`: Storage is managed outside the public schema, and one source video can have multiple related preview objects.
 
-Storage triggers keep the catalog synchronized with uploads, updates, renames, and deletes. Renames also run a transactional path-rewrite RPC so progress, previews, credits, folder playback order, related assets, and video access lists follow file and folder paths. A source-video delete removes its related catalog, progress, preview, and credit rows.
+Storage triggers keep the catalog synchronized with uploads, updates, renames, and deletes. A second trigger after video catalog materialization refreshes folder orderings, preventing an upload/catalog trigger race from dropping a video. Renames also run a transactional path-rewrite RPC so progress, previews, credits, folder playback order, related assets, and video access lists follow file and folder paths. A source-video delete removes its related catalog, progress, preview, and credit rows.
 
 ## Catalog tables
 
@@ -68,7 +68,7 @@ Video visibility is enforced by RLS. Authenticated users can read a row when the
 
 ### `public.folder_orderings`
 
-Each row represents a virtual folder path, including nested folders and the empty library root. `item_paths` stores the ordered direct videos and child-folder paths. `ordered_video_paths` stores the recursively flattened depth-first playback sequence used by the watch API. Storage catalog triggers preserve existing order, insert new items by numeric filename suffix or alphabetically, and refresh affected ancestor folders. The media manager can reorder direct items.
+Each row represents a virtual folder path, including nested folders and the empty library root. `item_paths` stores the ordered direct videos and child-folder paths. `ordered_video_paths` stores the recursively flattened depth-first playback sequence used by the watch API. Storage catalog triggers preserve existing order, insert new items by numeric filename suffix or alphabetically, and refresh affected ancestor folders. The media manager can reorder direct items. Its **Repair orderings** action calls an idempotent Supabase repair RPC that derives folder membership from `public.videos`, removes stale rows, inserts missed videos, and preserves existing item order wherever possible.
 
 ## User and playback tables
 

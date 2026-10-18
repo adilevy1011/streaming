@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+import threading
+from tkinter import messagebox, ttk
 
 
 class OrderingViewMixin:
@@ -11,6 +12,7 @@ class OrderingViewMixin:
         toolbar = tk.Frame(box, bg="white"); toolbar.pack(fill="x", padx=22, pady=20)
         tk.Label(toolbar, text="Folder", bg="white", font=("Segoe UI", 10, "bold")).pack(side="left")
         self.folder_var = tk.StringVar(); self.folder_combo = ttk.Combobox(toolbar, textvariable=self.folder_var, state="readonly", width=42); self.folder_combo.pack(side="left", padx=12); self.folder_combo.bind("<<ComboboxSelected>>", self.order_folder_selected)
+        ttk.Button(toolbar, text="Repair orderings", command=self.repair_folder_orderings).pack(side="right")
         tk.Label(box, text="Move items with the buttons to set the playback sequence.", bg="white", fg=self.MUTED).pack(anchor="w", padx=22)
         area = tk.Frame(box, bg="white"); area.pack(fill="both", expand=True, padx=22, pady=14)
         self.order_list = tk.Listbox(area, relief="flat", bd=0, bg="#f8fafc", font=("Segoe UI", 11), selectbackground="#dbeafe", activestyle="none"); self.order_list.pack(side="left", fill="both", expand=True)
@@ -30,6 +32,36 @@ class OrderingViewMixin:
         self.folder_var.set(self.current_order_folder or "Library root"); current = next((o for o in self.orderings if (o.get("folder_path") or "") == self.current_order_folder), {}); paths = self.order_drafts.get(self.current_order_folder, list(current.get("item_paths") or []))
         self.order_list.delete(0, "end")
         for path in paths: self.order_list.insert("end", path.rsplit("/", 1)[-1])
+
+    def repair_folder_orderings(self):
+        if self.has_dirty() and not messagebox.askyesno(
+            "Discard unsaved changes?",
+            "Repairing folder orderings reloads data from Supabase and discards unsaved changes.",
+            parent=self,
+        ):
+            return
+        self.save_button.configure(state="disabled")
+        self.status.configure(text="Repairing folder orderings...")
+
+        def worker():
+            try:
+                result = self.api.request("POST", "/rest/v1/rpc/repair_folder_orderings", body={}) or {}
+                self.after(0, lambda: self.folder_orderings_repaired(result))
+            except Exception as exc:
+                self.after(0, lambda error=exc: messagebox.showerror("Repair failed", str(error), parent=self))
+                self.after(0, self.update_save_button)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def folder_orderings_repaired(self, result):
+        self.order_drafts.clear()
+        self.status.configure(
+            text=(
+                f"Repair complete · {result.get('folders_refreshed', 0)} folder(s) refreshed · "
+                f"{result.get('stale_rows_removed', 0)} stale row(s) removed"
+            )
+        )
+        self.load_data()
 
     def move_order(self, delta):
         index = self.order_list.curselection()

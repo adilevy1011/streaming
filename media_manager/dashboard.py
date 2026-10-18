@@ -98,6 +98,7 @@ class MediaManager(PermissionsViewMixin, OrderingViewMixin, UploadsViewMixin, Up
     def data_loaded(self, users, videos, orderings):
         self.permission_drafts = {}
         self.users = [User(str(user.get("id") or user.get("user_id")), user.get("email") or str(user.get("id") or user.get("user_id")), user.get("new_videos_access") is not False) for user in users]; self.videos, self.orderings = list(videos), list(orderings); self.status.configure(text=f"Ready · {len(self.users)} people · {len(self.videos)} videos");
+        if self.page_title.cget("text") == "Playback order": self.render_ordering()
         if self.users: self.select_user(self.users[0])
         self.update_save_button()
 

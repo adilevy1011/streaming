@@ -39,6 +39,7 @@ function setStreamingSource(player, mediaPath, token) {
     if (player.canPlayType('application/vnd.apple.mpegurl')) {
         player.addEventListener('error', () => {
             console.error('Native HLS playback error', player.error);
+            showPlaybackError(player);
         }, { once: true });
         player.src = manifest;
         player.load();
@@ -67,11 +68,18 @@ function setStreamingSource(player, mediaPath, token) {
                 }
                 hls.startLoad();
             } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                hls.recoverMediaError();
+                if (tryWindowsDirectFallback(player, encodedPath, token, data.details)) {
+                    hls.destroy();
+                    if (activeHls === hls) activeHls = null;
+                    return;
+                }
+                showPlaybackError(player);
+                hls.destroy();
+                if (activeHls === hls) activeHls = null;
             } else {
                 hls.destroy();
                 if (activeHls === hls) activeHls = null;
-                player.dispatchEvent(new Event('error'));
+                showPlaybackError(player);
             }
         });
         hls.attachMedia(player);

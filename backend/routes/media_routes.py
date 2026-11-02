@@ -1,9 +1,6 @@
 """Media and progress HTTP routes."""
 
-import os
 import subprocess
-import tempfile
-from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 
@@ -71,36 +68,16 @@ def register() -> None:
         safe_path = api.validate_media_path(video_path)
         api.ensure_video_access(token, safe_path)
         media_url = f"{api.SUPABASE_URL}/storage/v1/object/{api.MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
-        temp_path = ""
         try:
-            suffix = Path(safe_path).suffix or ".video"
-            with tempfile.NamedTemporaryFile(prefix="embedded-subtitle-", suffix=suffix, delete=False) as temp_file:
-                temp_path = temp_file.name
-                async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
-                    async with client.stream("GET", media_url, headers=api.supabase_headers(token)) as upstream:
-                        if upstream.status_code >= 400:
-                            raise HTTPException(status_code=404, detail="Media not found.")
-                        async for chunk in upstream.aiter_bytes(1024 * 1024):
-                            temp_file.write(chunk)
             try:
-                webvtt = await run_in_threadpool(api.extract_embedded_subtitle, temp_path)
+                webvtt = await run_in_threadpool(api.extract_embedded_subtitle_from_url, media_url, api.supabase_headers(token))
             except HTTPException as exc:
                 if exc.status_code == 404:
                     return Response(status_code=status.HTTP_204_NO_CONTENT)
                 raise
             return Response(content=webvtt, media_type="text/vtt")
-        except OSError as exc:
-            if exc.errno == 28:
-                raise HTTPException(status_code=507, detail="The server has insufficient disk space for subtitle extraction.") from exc
-            raise
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="Embedded subtitle extraction timed out.") from exc
-        finally:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except FileNotFoundError:
-                    pass
 
     @app.get("/api/media/credits")
     def credits(video_path: str = Query(..., min_length=1), _: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> dict[str, Any]:

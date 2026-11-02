@@ -338,6 +338,23 @@ def extract_embedded_subtitle(video_path: str) -> str:
     return result.stdout.decode("utf-8-sig", errors="replace")
 
 
+def extract_embedded_subtitle_from_url(media_url: str, headers: dict[str, str]) -> str:
+    """Extract subtitles directly from remote storage without staging the video locally."""
+    if shutil.which("ffmpeg") is None:
+        raise HTTPException(status_code=503, detail="Embedded subtitle extraction is unavailable.")
+    header_text = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-headers", header_text,
+         "-i", media_url, "-map", "0:s:0", "-c:s", "webvtt", "-f", "webvtt", "pipe:1"],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise HTTPException(status_code=404, detail="No embedded subtitles found.")
+    return result.stdout.decode("utf-8-sig", errors="replace")
+
+
 def ensure_video_access(token: str, video_path: str) -> None:
     rows = supabase_request("GET", "/rest/v1/videos", token, params={"select": "path", "path": f"eq.{video_path}", "limit": "1"}) or []
     if not rows:

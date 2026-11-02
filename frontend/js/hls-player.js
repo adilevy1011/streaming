@@ -20,9 +20,14 @@ function directMediaUrl(encodedPath, token) {
 function tryWindowsDirectFallback(player, encodedPath, token, reason) {
     if (!/Windows/i.test(navigator.userAgent) || player.dataset.directFallback === 'true') return false;
     player.dataset.directFallback = 'true';
-    player.addEventListener('error', () => showPlaybackError(player), { once: true });
+    const directUrl = directMediaUrl(encodedPath, token);
+    player.addEventListener('error', () => {
+        setTimeout(() => {
+            if (player.currentSrc === directUrl || player.src === directUrl) showPlaybackError(player);
+        }, 100);
+    }, { once: true });
     console.warn('HLS unavailable; trying direct Windows playback.', reason || 'unknown reason');
-    player.src = directMediaUrl(encodedPath, token);
+    player.src = directUrl;
     player.load();
     return true;
 }

@@ -79,7 +79,12 @@ class ScriptRunnerMixin:
             name = entry.get("name") or ""
             if not name or name == ".emptyFolderPlaceholder": continue
             path = f"{prefix}/{name}" if prefix else name
-            if entry.get("id") is None: found.extend(self.find_script_videos(path))
+            if entry.get("id") is None:
+                if name.endswith("-hls"):
+                    if any((child.get("name") or "") == "index.m3u8" for child in self.api.storage_list(path)):
+                        found.append(f"{path}/index.m3u8")
+                    continue
+                found.extend(self.find_script_videos(path))
             elif Path(name).suffix.lower() in VIDEO_EXTENSIONS: found.append(path)
         return found
 
@@ -87,6 +92,8 @@ class ScriptRunnerMixin:
         def worker():
             try:
                 videos = self.find_script_videos(folder)
+                originals = {(Path(video).parent.as_posix(), Path(video).stem.casefold()) for video in videos if not video.endswith("/index.m3u8")}
+                videos = [video for video in videos if not video.endswith("/index.m3u8") or (Path(video).parent.parent.as_posix(), Path(video).parent.name[:-4].casefold()) not in originals]
                 if not videos:
                     self.after(0, lambda: (status.configure(text="No videos found in that directory."), start_button.configure(state="normal"))); return
                 self.after(0, lambda: (progress.configure(maximum=len(videos), value=0), status.configure(text=f"0/{len(videos)} videos")))

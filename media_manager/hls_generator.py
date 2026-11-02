@@ -18,8 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-CACHE_VERSION = "hls-v5"
-HLS_PREFIX = "__previews/hls"
+CACHE_VERSION = "hls-v6"
 
 
 def encoded_path(path: str) -> str:
@@ -28,6 +27,13 @@ def encoded_path(path: str) -> str:
 
 def cache_key(video: str) -> str:
     return hashlib.sha256(f"{CACHE_VERSION}:{video}".encode("utf-8")).hexdigest()
+
+
+def hls_prefix(video: str) -> str:
+    path = Path(video)
+    if path.name == "index.m3u8" and path.parent.name.endswith("-hls"):
+        return "/".join(path.parts[:-1])
+    return "/".join((*path.parts[:-1], f"{path.stem}-hls"))
 
 
 def request(url: str, key: str, method: str = "GET", body: bytes | None = None, content_type: str | None = None, allow_missing: bool = False):
@@ -58,23 +64,25 @@ def upload(url: str, key: str, body: bytes, content_type: str) -> None:
         raise RuntimeError(f"Storage upload failed: {exc.reason}") from exc
 
 
-def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str) -> None:
-    digest = cache_key(video)
-    prefix = f"{HLS_PREFIX}/{digest}"
+def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local_source: str | None = None) -> None:
+    prefix = hls_prefix(video)
     base_url = f"{supabase_url.rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}"
     manifest_url = f"{base_url}/{encoded_path(prefix + '/index.m3u8')}"
     if request(manifest_url, key, allow_missing=True) is not None:
         print("HLS already exists; skipping.", flush=True)
         return
 
-    source_url = f"{base_url}/{encoded_path(video)}"
     with tempfile.TemporaryDirectory(prefix="adlv-hls-") as work:
         work_path = Path(work)
         source = work_path / "source"
         output = work_path
-        print("Downloading source to the media manager workstation...", flush=True)
-        with request(source_url, key) as response, source.open("wb") as destination:
-            shutil.copyfileobj(response, destination, length=1024 * 1024)
+        if local_source:
+            source = Path(local_source)
+        else:
+            source_url = f"{base_url}/{encoded_path(video)}"
+            print("Downloading source to the media manager workstation...", flush=True)
+            with request(source_url, key) as response, source.open("wb") as destination:
+                shutil.copyfileobj(response, destination, length=1024 * 1024)
 
         command = [
             ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
@@ -104,8 +112,9 @@ def main() -> int:
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--video", required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--source", help="Use this local source instead of downloading the original.")
     args = parser.parse_args()
-    run(args.video, args.supabase_url, args.supabase_key, args.bucket, args.ffmpeg)
+    run(args.video, args.supabase_url, args.supabase_key, args.bucket, args.ffmpeg, args.source)
     return 0
 
 

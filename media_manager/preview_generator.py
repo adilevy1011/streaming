@@ -45,12 +45,25 @@ def encoded(path: str) -> str: return "/".join(quote(part, safe="") for part in 
 def preview_prefix(path: str) -> str: return "__previews/" + base64.urlsafe_b64encode(path.encode()).decode().rstrip("=")
 
 
+def hls_manifest_path(path: str) -> str:
+    current = Path(path)
+    if current.name == "index.m3u8" and current.parent.name.endswith("-hls"):
+        return path
+    prefix = "/".join((*current.parts[:-1], f"{current.stem}-hls"))
+    return f"{prefix}/index.m3u8"
+
+
 def video_paths(client: Client, prefix: str = "") -> list[str]:
     paths = []
     for item in client.list_storage(prefix):
         name = item.get("name", ""); path = f"{prefix}/{name}" if prefix else name
         if not name: continue
-        if item.get("id") is None: paths.extend(video_paths(client, path))
+        if item.get("id") is None:
+            if name.endswith("-hls"):
+                if any((child.get("name") or "") == "index.m3u8" for child in client.list_storage(path)):
+                    paths.append(f"{path}/index.m3u8")
+                continue
+            paths.extend(video_paths(client, path))
         elif Path(name).suffix.lower().lstrip(".") in VIDEO_EXTENSIONS: paths.append(path)
     return paths
 
@@ -59,10 +72,31 @@ def download(client: Client, remote: str, local: Path):
     with client.request(f"/storage/v1/object/authenticated/{quote(client.bucket, safe='')}/{encoded(remote)}") as source, local.open("wb") as target: shutil.copyfileobj(source, target)
 
 
+def download_hls(client: Client, manifest_path: str, local_manifest: Path):
+    remote_url = f"/storage/v1/object/authenticated/{quote(client.bucket, safe='')}/{encoded(manifest_path)}"
+    with client.request(remote_url) as response:
+        manifest = response.read().decode("utf-8")
+    local_manifest.write_text(manifest, encoding="utf-8")
+    folder = manifest_path.rpartition("/")[0]
+    for line in manifest.splitlines():
+        name = line.strip()
+        if not name or name.startswith("#") or "/" in name:
+            continue
+        download(client, f"{folder}/{name}", local_manifest.parent / name)
+
+
 def generate(client: Client, media_path: str, force: bool):
     prefix = preview_prefix(media_path); existing = {f"{prefix}/{x.get('name')}" for x in client.list_storage(prefix) if x.get("id") is not None}
     with tempfile.TemporaryDirectory(prefix="adlv-media-preview-") as temp:
-        work = Path(temp); source, sprites = work / "source", work / "sprites"; sprites.mkdir(); log(f"Downloading {media_path}"); download(client, media_path, source)
+        work = Path(temp); source, sprites = work / "source", work / "sprites"; sprites.mkdir()
+        rendition = hls_manifest_path(media_path)
+        try:
+            if client.list_storage(rendition.rpartition('/')[0]):
+                log(f"Using HLS rendition {rendition}"); source = work / "index.m3u8"; download_hls(client, rendition, source)
+            else:
+                raise RuntimeError("No HLS rendition")
+        except Exception:
+            log(f"Downloading {media_path}"); download(client, media_path, source)
         duration = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], text=True).strip())
         graph = f"fps=1/{INTERVAL_SECONDS},scale={THUMBNAIL_WIDTH}:{THUMBNAIL_HEIGHT}:force_original_aspect_ratio=decrease,pad={THUMBNAIL_WIDTH}:{THUMBNAIL_HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,tile={COLUMNS}x{ROWS}:padding=0:margin=0"
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(source), "-vf", graph, "-q:v", "6", "-f", "image2", str(sprites / "sprite-%03d.jpg")], check=True)
@@ -78,7 +112,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--supabase-url", required=True); parser.add_argument("--supabase-key", required=True); parser.add_argument("--bucket", required=True); parser.add_argument("--video", required=True); parser.add_argument("--force", action="store_true"); args = parser.parse_args()
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"): print("ERROR: ffmpeg and ffprobe are required on PATH", file=sys.stderr); return 2
     client = Client(args.supabase_url, args.supabase_key, args.bucket)
-    if args.video not in video_paths(client): print(f"ERROR: video not found: {args.video}", file=sys.stderr); return 2
+    available = video_paths(client)
+    originals = {(Path(path).parent.as_posix(), Path(path).stem.casefold()) for path in available if not path.endswith("/index.m3u8")}
+    available = [path for path in available if not path.endswith("/index.m3u8") or (Path(path).parent.parent.as_posix(), Path(path).parent.name[:-4].casefold()) not in originals]
+    if args.video not in available: print(f"ERROR: video not found: {args.video}", file=sys.stderr); return 2
     try: generate(client, args.video, args.force); print("Preview generation finished", flush=True); return 0
     except Exception as exc: print(f"ERROR: {exc}", file=sys.stderr); return 1
 

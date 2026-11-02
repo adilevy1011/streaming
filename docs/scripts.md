@@ -110,5 +110,5 @@ with `CREDITS_DEBUG=true`.
 Use the media manager's **Run script → Generate HLS** option for a video or
 folder. This trusted workstation job downloads the source to its local
 temporary workspace, transcodes it to H.264/AAC HLS, and uploads the playlist
-and segments to `__previews/hls/` in Supabase Storage. The public backend only
+and segments beside the source under `<video-name>-hls/` in Supabase Storage. The public backend only
 reads those artifacts and does not need the service-role key.

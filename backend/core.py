@@ -295,9 +295,16 @@ def catalog_videos(token: str, path: str = "") -> list[dict[str, Any]]:
     image_rows = catalog_rows(token, "media_objects", "path,name,folder_path,updated_at", {"kind": "eq.image"})
     images = {(image.get("folder_path", ""), image.get("name", "").rsplit(".", 1)[0].casefold()): image for image in image_rows}
     prefix = f"{path.rstrip('/')}/" if path else ""
+    video_paths = {row.get("path", "") for row in rows}
     videos = []
     for row in rows:
         video_path = row.get("path", "")
+        if video_path.endswith("-hls/index.m3u8"):
+            virtual_stem = video_path.rsplit("/", 2)[-2][:-4]
+            parent = video_path.rsplit("/", 2)[0] if video_path.count("/") >= 2 else ""
+            if any(candidate.rsplit("/", 1)[-1].rsplit(".", 1)[0].casefold() == virtual_stem.casefold() and candidate.rsplit("/", 1)[0] == parent for candidate in video_paths if candidate != video_path):
+                continue
+            row = {**row, "name": virtual_stem, "folder_path": parent}
         if prefix and not video_path.startswith(prefix):
             continue
         image = images.get((row.get("folder_path", ""), row.get("name", "").rsplit(".", 1)[0].casefold()))

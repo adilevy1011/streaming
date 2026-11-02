@@ -98,6 +98,7 @@ def generate(media_path: str, media_url: str, headers: dict[str, str]) -> Path:
                     "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
                     "-c:a", "aac", "-b:a", "128k", "-ac", "2",
                     "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
+                    "-hls_flags", "independent_segments",
                     "-hls_segment_filename", str(partial / "segment-%05d.ts"),
                     str(partial / "index.m3u8"),
                 ]

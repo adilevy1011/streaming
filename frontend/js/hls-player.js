@@ -10,6 +10,9 @@ function setStreamingSource(player, mediaPath, token) {
     player.removeAttribute('src');
     player.load();
     if (player.canPlayType('application/vnd.apple.mpegurl')) {
+        player.addEventListener('error', () => {
+            console.error('Native HLS playback error', player.error);
+        }, { once: true });
         player.src = manifest;
         player.load();
         return;

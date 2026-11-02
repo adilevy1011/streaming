@@ -104,3 +104,11 @@ Each run also removes `video_credits` rows whose source video no longer
 exists, then rechecks every available preview manifest. Videos without a
 confident match are left without a credit row and can be inspected by rerunning
 with `CREDITS_DEBUG=true`.
+
+## HLS generation
+
+Use the media manager's **Run script → Generate HLS** option for a video or
+folder. This trusted workstation job downloads the source to its local
+temporary workspace, transcodes it to H.264/AAC HLS, and uploads the playlist
+and segments to `__previews/hls/` in Supabase Storage. The public backend only
+reads those artifacts and does not need the service-role key.

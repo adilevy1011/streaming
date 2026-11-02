@@ -32,7 +32,7 @@ The manager provides:
 - People & access: search users, filter videos, allow/block individual videos, bulk allow/clear, and control access to new videos.
 - Playback order: choose a folder and move items up or down before saving.
 - Manage uploads: browse storage folders, create folders, upload media and subtitles, rename items, and delete files or folders.
-- Media manager: right-click a video to edit subtitles, inspect timeline/credit metadata, set a credits timestamp, manage artwork, and view the repository scripts' live output.
+- Media manager: right-click a video to edit subtitles, inspect timeline/credit metadata, set a credits timestamp, manage artwork, and view the repository scripts' live output. The **Run script** tool can also generate device-compatible HLS artifacts in Supabase; this keeps the service-role key out of the public backend.
 
 The Generate previews and Detect credits actions launch the standalone `preview_generator.py` and `credit_detector.py` files inside this directory. They receive the URL, key, bucket, and video path as arguments and run locally.
 

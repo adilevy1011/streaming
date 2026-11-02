@@ -25,7 +25,7 @@ class ScriptRunnerMixin:
         body = tk.Frame(window, bg="white"); body.pack(fill="both", expand=True, padx=26, pady=24)
         tk.Label(body, text="Run a media script", bg="white", fg="#101828", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         tk.Label(body, text="Choose a script and storage directory. It will run for every video below that directory.", bg="white", fg="#667085", wraplength=640, justify="left").pack(anchor="w", pady=(4, 20))
-        scripts = {"Generate previews": "preview_generator.py", "Detect credits": "credit_detector.py"}
+        scripts = {"Generate previews": "preview_generator.py", "Generate HLS": "hls_generator.py", "Detect credits": "credit_detector.py"}
         tk.Label(body, text="Script", bg="white").pack(anchor="w")
         script_var = tk.StringVar(value=next(iter(scripts))); ttk.Combobox(body, textvariable=script_var, values=list(scripts), state="readonly", width=60).pack(fill="x", pady=(4, 14))
         tk.Label(body, text="Storage directory", bg="white").pack(anchor="w")

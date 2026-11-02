@@ -47,8 +47,9 @@ MEDIA_BUCKET=media
 CORS_ORIGINS=https://<YOUR_DOMAIN>
 AUTH_COOKIE_SECURE=true
 REDIS_URL=redis://localhost:6379/0
-# Optional: persistent directory for generated HLS files
+# Optional: local scratch directory for HLS manifests and upload buffers
 # HLS_CACHE_DIR=/var/cache/adlv-media-hls
+# HLS artifacts are stored in Supabase under __previews/hls by default.
 # Optional: absolute path when systemd cannot see ffmpeg on PATH
 # FFMPEG_PATH=/usr/bin/ffmpeg
 # Optional: maximum seconds to wait for the first HLS segment
@@ -176,7 +177,7 @@ sudo nginx -t && sudo systemctl reload nginx
 - **Unauthorized login:** verify the user, password, email allowlist, email confirmation, and matching Supabase URL/key.
 - **Empty library:** verify the `media` bucket, `MEDIA_BUCKET`, storage policies, and `/api/health`.
 - **Missing previews:** see [Scripts](scripts.md).
-- **HLS playback fails:** verify `ffmpeg -version` works for the backend service user, or set `FFMPEG_PATH` to its absolute path in the systemd `EnvironmentFile`; also verify that `HLS_CACHE_DIR` is writable. The first playback of a source video downloads and transcodes it before starting; later playbacks reuse the cache.
+- **HLS playback fails:** run the media manager's **Generate HLS** script for the video, then verify the generated `__previews/hls/` objects exist in Supabase. The public backend only reads those artifacts and does not require the service-role key.
 - **nginx 502:** check `curl http://127.0.0.1:8000/api/health` and `sudo journalctl -u media-streamer -n 100 --no-pager`.
 
 ## Security checklist

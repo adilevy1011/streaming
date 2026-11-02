@@ -19,3 +19,4 @@ scripts/model_trainer/*
 
 # Binary files
 dist/
+models/

@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 try:
@@ -89,6 +89,10 @@ def register() -> None:
                     return Response(status_code=status.HTTP_204_NO_CONTENT)
                 raise
             return Response(content=webvtt, media_type="text/vtt")
+        except OSError as exc:
+            if exc.errno == 28:
+                raise HTTPException(status_code=507, detail="The server has insufficient disk space for subtitle extraction.") from exc
+            raise
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="Embedded subtitle extraction timed out.") from exc
         finally:
@@ -199,7 +203,12 @@ def register() -> None:
         api.ensure_video_access(token, safe_path)
         media_url = f"{api.SUPABASE_URL}/storage/v1/object/{api.MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
         manifest = await run_in_threadpool(hls.generate, safe_path, media_url, api.supabase_headers(token))
-        playlist = manifest.read_text(encoding="utf-8")
+        try:
+            playlist = manifest.read_text(encoding="utf-8")
+        except OSError as exc:
+            import logging
+            logging.getLogger(__name__).exception("HLS manifest disappeared before it could be served: %s", safe_path)
+            raise HTTPException(status_code=503, detail="The HLS manifest is not ready yet.") from exc
         token_query = quote(token, safe="")
         playlist = "\n".join(
             f"{line}?token={token_query}" if line.startswith("segment-") else line
@@ -214,7 +223,21 @@ def register() -> None:
         api.ensure_video_access(token, safe_path)
         if not segment_name.startswith("segment-") or not segment_name.endswith(".ts"):
             raise HTTPException(status_code=404, detail="HLS segment not found.")
-        segment = hls.cache_dir(safe_path) / segment_name
-        if not segment.is_file():
+        segment_url = hls.storage_segment_url(safe_path, segment_name)
+        client = httpx.AsyncClient(follow_redirects=True, timeout=60)
+        upstream = await client.send(client.build_request("GET", segment_url, headers=hls.storage_headers(api.supabase_headers(token))), stream=True)
+        if upstream.status_code >= 400:
+            await upstream.aclose()
+            await client.aclose()
             raise HTTPException(status_code=404, detail="HLS segment not found.")
-        return FileResponse(segment, media_type="video/mp2t", headers={"Cache-Control": "private, max-age=86400"})
+        response_headers = {key: value for key, value in upstream.headers.items() if key.lower() in {"content-type", "content-length", "etag"}}
+
+        async def stream_segment() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in upstream.aiter_bytes(1024 * 1024):
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(stream_segment(), status_code=upstream.status_code, headers={**response_headers, "Cache-Control": "private, max-age=86400"}, media_type="video/mp2t")

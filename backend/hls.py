@@ -19,6 +19,7 @@ HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", str(Path(tempfile.gettempdi
 # Bump when the output compatibility settings change so old caches are not
 # reused with a different encoder contract.
 CACHE_VERSION = "hls-v3"
+FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -40,6 +41,11 @@ def manifest_path(media_path: str) -> Path:
     return cache_dir(media_path) / "index.m3u8"
 
 
+def ffmpeg_binary() -> str | None:
+    """Resolve FFmpeg using PATH or an explicit service-friendly path."""
+    return shutil.which(FFMPEG_PATH) or (FFMPEG_PATH if Path(FFMPEG_PATH).is_file() else None)
+
+
 def _cache_is_complete(media_path: str) -> bool:
     """Only reuse a VOD cache when every segment referenced by its playlist exists."""
     manifest = manifest_path(media_path)
@@ -58,7 +64,8 @@ def _cache_is_complete(media_path: str) -> bool:
 
 def generate(media_path: str, media_url: str, headers: dict[str, str]) -> Path:
     """Download a source object and create a broadly compatible HLS VOD cache."""
-    if shutil.which("ffmpeg") is None:
+    ffmpeg = ffmpeg_binary()
+    if ffmpeg is None:
         raise HTTPException(status_code=503, detail="HLS playback requires ffmpeg on the server.")
 
     target = cache_dir(media_path)
@@ -84,7 +91,7 @@ def generate(media_path: str, media_url: str, headers: dict[str, str]) -> Path:
                             for chunk in response.iter_bytes(1024 * 1024):
                                 output.write(chunk)
                 command = [
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
                     "-map", "0:v:0", "-map", "0:a:0?",
                     # Keep the single rendition within limits supported by
                     # older phones and inexpensive browsers. This also makes

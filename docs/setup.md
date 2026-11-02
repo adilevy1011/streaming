@@ -49,6 +49,8 @@ AUTH_COOKIE_SECURE=true
 REDIS_URL=redis://localhost:6379/0
 # Optional: persistent directory for generated HLS files
 # HLS_CACHE_DIR=/var/cache/adlv-media-hls
+# Optional: absolute path when systemd cannot see ffmpeg on PATH
+# FFMPEG_PATH=/usr/bin/ffmpeg
 ```
 
 Keep Redis bound to a private interface and do not expose port 6379 to the public internet. The bundled production service uses one Uvicorn worker because resumable upload cursors are currently process-local. If you move those cursors to shared storage, you can scale workers and should configure Redis for shared Watch Together state and rate limits.
@@ -172,7 +174,7 @@ sudo nginx -t && sudo systemctl reload nginx
 - **Unauthorized login:** verify the user, password, email allowlist, email confirmation, and matching Supabase URL/key.
 - **Empty library:** verify the `media` bucket, `MEDIA_BUCKET`, storage policies, and `/api/health`.
 - **Missing previews:** see [Scripts](scripts.md).
-- **HLS playback fails:** verify `ffmpeg -version` works for the backend service user and that `HLS_CACHE_DIR` is writable. The first playback of a source video downloads and transcodes it before starting; later playbacks reuse the cache.
+- **HLS playback fails:** verify `ffmpeg -version` works for the backend service user, or set `FFMPEG_PATH` to its absolute path in the systemd `EnvironmentFile`; also verify that `HLS_CACHE_DIR` is writable. The first playback of a source video downloads and transcodes it before starting; later playbacks reuse the cache.
 - **nginx 502:** check `curl http://127.0.0.1:8000/api/health` and `sudo journalctl -u media-streamer -n 100 --no-pager`.
 
 ## Security checklist

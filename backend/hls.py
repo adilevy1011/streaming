@@ -11,14 +11,20 @@ import httpx
 from fastapi import HTTPException
 
 HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", str(Path(os.getenv("TMPDIR", "/tmp")) / "adlv-media-hls")))
-HLS_STORAGE_PREFIX = os.environ.get("HLS_STORAGE_PREFIX", "__previews/hls").strip("/")
-CACHE_VERSION = "hls-v5"
+CACHE_VERSION = "hls-v6"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 MEDIA_BUCKET = os.environ.get("MEDIA_BUCKET", "media")
 
 
 def cache_key(media_path: str) -> str:
     return hashlib.sha256(f"{CACHE_VERSION}:{media_path}".encode("utf-8")).hexdigest()
+
+
+def storage_prefix(media_path: str) -> str:
+    path = Path(media_path)
+    if path.name == "index.m3u8" and path.parent.name.endswith("-hls"):
+        return "/".join(path.parts[:-1])
+    return "/".join((*path.parts[:-1], f"{path.stem}-hls"))
 
 
 def cache_dir(media_path: str) -> Path:
@@ -30,7 +36,7 @@ def manifest_path(media_path: str) -> Path:
 
 
 def _storage_path(media_path: str, name: str = "index.m3u8") -> str:
-    return f"{HLS_STORAGE_PREFIX}/{cache_key(media_path)}/{name}"
+    return f"{storage_prefix(media_path)}/{name}"
 
 
 def storage_segment_url(media_path: str, segment_name: str) -> str:

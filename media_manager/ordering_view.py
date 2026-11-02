@@ -31,7 +31,8 @@ class OrderingViewMixin:
         if self.current_order_folder not in folders: self.current_order_folder = folders[0]
         self.folder_var.set(self.current_order_folder or "Library root"); current = next((o for o in self.orderings if (o.get("folder_path") or "") == self.current_order_folder), {}); paths = self.order_drafts.get(self.current_order_folder, list(current.get("item_paths") or []))
         self.order_list.delete(0, "end")
-        for path in paths: self.order_list.insert("end", path.rsplit("/", 1)[-1])
+        video_names = {video.get("path"): video.get("name") for video in self.videos}
+        for path in paths: self.order_list.insert("end", video_names.get(path) or path.rsplit("/", 1)[-1])
 
     def repair_folder_orderings(self):
         if self.has_dirty() and not messagebox.askyesno(

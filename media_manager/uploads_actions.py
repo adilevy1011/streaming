@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import subprocess
+import sys
 import tkinter as tk
 from io import BytesIO
 from pathlib import Path
@@ -150,11 +152,15 @@ class UploadActionsMixin:
         def scroll(event):
             canvas.yview_scroll(-1 * (event.delta // 120 or (-1 if event.delta < 0 else 1)), "units")
         window.bind("<MouseWheel>", scroll)
-        header = tk.Frame(scrollable); header.pack(fill="x"); tk.Label(header, text="Local file", width=30, anchor="w").pack(side="left"); tk.Label(header, text="Upload name", width=25, anchor="w").pack(side="left", padx=8); tk.Label(header, text="Destination folder", anchor="w").pack(side="left")
+        header = tk.Frame(scrollable); header.pack(fill="x"); tk.Label(header, text="Local file", width=30, anchor="w").pack(side="left"); tk.Label(header, text="Upload name", width=25, anchor="w").pack(side="left", padx=8); tk.Label(header, text="Destination folder", width=28, anchor="w").pack(side="left"); tk.Label(header, text="Video storage", anchor="w").pack(side="left")
         folder_options = sorted({self.upload_path, *[item["path"] for item in self.upload_items if item["type"] == "folder"]})
         rows = []
         for file_path in files:
-            row = tk.Frame(scrollable); row.pack(fill="x", pady=3); tk.Label(row, text=file_path.name, width=30, anchor="w").pack(side="left"); name = tk.StringVar(value=file_path.name); folder = tk.StringVar(value=self.upload_path); ttk.Entry(row, textvariable=name, width=25).pack(side="left", padx=8); folder_input = DirectoryAutocomplete(row, api=self.api, initial_values=folder_options, textvariable=folder, width=35); folder_input.pack(side="left"); tk.Button(row, text="Choose...", command=lambda index=len(rows): self.open_folder_picker(window, rows, index, same_folder)).pack(side="left", padx=6); rows.append({"path": file_path, "name": name, "folder": folder})
+            row = tk.Frame(scrollable); row.pack(fill="x", pady=3); tk.Label(row, text=file_path.name, width=30, anchor="w").pack(side="left"); name = tk.StringVar(value=file_path.name); folder = tk.StringVar(value=self.upload_path); ttk.Entry(row, textvariable=name, width=25).pack(side="left", padx=8); folder_input = DirectoryAutocomplete(row, api=self.api, initial_values=folder_options, textvariable=folder, width=30); folder_input.pack(side="left"); tk.Button(row, text="Choose...", command=lambda index=len(rows): self.open_folder_picker(window, rows, index, same_folder)).pack(side="left", padx=6)
+            is_video = file_path.suffix.lower() in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"}
+            mode = tk.StringVar(value="Upload original only")
+            ttk.Combobox(row, textvariable=mode, state="readonly", width=28, values=("Upload original only", "Upload original + HLS", "Upload HLS only"), height=3 if is_video else 1).pack(side="left", padx=(6, 0)) if is_video else tk.Label(row, text="Not a video", fg="#98a2b3", width=28, anchor="w").pack(side="left", padx=(6, 0))
+            rows.append({"path": file_path, "name": name, "folder": folder, "mode": mode, "is_video": is_video})
         for index, row in enumerate(rows): row["folder"].trace_add("write", lambda *_args, current=index: self.staging_folder_changed(rows, current, same_folder))
         actions = tk.Frame(window); actions.pack(fill="x", padx=18, pady=16); ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right", padx=(8, 0)); ttk.Button(actions, text="Start uploads", style="Primary.TButton", command=lambda: self.confirm_staged_uploads(window, rows)).pack(side="right")
 
@@ -192,13 +198,13 @@ class UploadActionsMixin:
         for row in rows:
             name = row["name"].get().strip(); folder = row["folder"].get().strip("/")
             if not name or "/" in name or "\\" in name: messagebox.showerror("Invalid upload name", "Names must be non-empty and cannot contain slashes.", parent=window); return
-            staged.append((row["path"], f"{folder}/{name}" if folder else name))
+            staged.append((row["path"], f"{folder}/{name}" if folder else name, row["mode"].get() if row["is_video"] else "Upload original only"))
         window.grab_release(); window.destroy()
         self.status.configure(text="Checking existing files before upload...")
         def worker():
             try:
                 existing_by_folder = {}
-                for _, destination in staged:
+                for _, destination, _ in staged:
                     folder = destination.rpartition("/")[0]
                     if folder not in existing_by_folder:
                         existing_by_folder[folder] = {entry.get("name") for entry in self.api.storage_list(folder)}
@@ -209,7 +215,7 @@ class UploadActionsMixin:
 
     def confirm_existing_uploads(self, staged, existing_by_folder):
         approved = []
-        for local_path, destination in staged:
+        for local_path, destination, mode in staged:
             folder, _, name = destination.rpartition("/")
             if name in existing_by_folder.get(folder, set()):
                 replace = messagebox.askyesno(
@@ -219,21 +225,22 @@ class UploadActionsMixin:
                 )
                 if not replace:
                     continue
-            approved.append((local_path, destination))
-        for local_path, destination in approved:
-            self.enqueue_upload(local_path, destination)
+            approved.append((local_path, destination, mode))
+        for local_path, destination, mode in approved:
+            self.enqueue_upload(local_path, destination, mode)
         if approved:
             self.status.configure(text=f"Queued {len(approved)} upload(s)")
         else:
             self.status.configure(text="No uploads queued")
 
-    def enqueue_upload(self, local_path: Path, destination=None):
+    def enqueue_upload(self, local_path: Path, destination=None, mode="Upload original only"):
         destination = destination or (f"{self.upload_path}/{local_path.name}" if self.upload_path else local_path.name)
         self.upload_queue_counter += 1
         item = {
             "id": str(self.upload_queue_counter),
             "path": local_path,
             "destination": destination,
+            "mode": mode,
             "status": "Queued",
             "progress": 0,
             "pause_requested": threading.Event(),
@@ -347,7 +354,14 @@ class UploadActionsMixin:
         def progress(done, total): self.after(0, lambda: self.upload_progress(item, int(done * 100 / total) if total else 100))
         def worker():
             try:
-                self.api.upload_file(item["path"], item["destination"], progress, item["pause_requested"].is_set, item["cancel_requested"].is_set, item["upload_state"])
+                if item["mode"] != "Upload HLS only":
+                    self.api.upload_file(item["path"], item["destination"], progress, item["pause_requested"].is_set, item["cancel_requested"].is_set, item["upload_state"])
+                if item["mode"] in {"Upload original + HLS", "Upload HLS only"}:
+                    self.after(0, lambda: self.upload_status.configure(text=f"Generating HLS for {item['path'].name}..."))
+                    command = [sys.executable, str(Path(__file__).with_name("hls_generator.py")), "--supabase-url", self.api.url, "--supabase-key", self.api.key, "--bucket", self.api.bucket, "--video", item["destination"]]
+                    if item["mode"] == "Upload HLS only": command.extend(["--source", str(item["path"])])
+                    result = subprocess.run(command, cwd=str(Path(__file__).parent), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+                    if result.returncode: raise RuntimeError(result.stdout or result.stderr or "HLS generation failed.")
                 self.after(0, lambda: self.upload_finished(item, None))
             except UploadPaused:
                 self.after(0, lambda: self.upload_paused(item))
@@ -409,12 +423,24 @@ class UploadActionsMixin:
         def worker():
             moved = []
             try:
-                sources = self.storage_walk(item["path"]) if item["type"] == "folder" else [item["path"]]
+                source_root = item["path"]
+                target_destination = destination
+                if item.get("hls_only"):
+                    source_root = item["path"].rsplit("/", 1)[0]
+                    target_destination = f"{destination}-hls"
+                sources = self.storage_walk(source_root) if item["type"] == "folder" or item.get("hls_only") else [source_root]
+                if item.get("hls_present") and not item.get("hls_only"):
+                    hls_root = f"{source_root.rsplit('/', 1)[0]}/{Path(source_root).stem}-hls" if "/" in source_root else f"{Path(source_root).stem}-hls"
+                    sources.extend(self.storage_walk(hls_root)); hls_destination = f"{target_destination.rsplit('/', 1)[0]}/{Path(target_destination).stem}-hls" if "/" in target_destination else f"{Path(target_destination).stem}-hls"
+                else: hls_root = hls_destination = None
                 for source in sources:
-                    target = destination + source[len(item["path"]):]
+                    root = hls_root if hls_root and source.startswith(hls_root) else source_root
+                    target_root = hls_destination if hls_root and source.startswith(hls_root) else target_destination
+                    target = target_root + source[len(root):]
                     self.api.storage_move(source, target)
                     moved.append((source, target))
-                self.api.request("POST", "/rest/v1/rpc/rewrite_media_paths", body={"old_path": item["path"], "new_path": destination})
+                new_catalog_path = f"{target_destination}/index.m3u8" if item.get("hls_only") else target_destination
+                self.api.request("POST", "/rest/v1/rpc/rewrite_media_paths", body={"old_path": item["path"], "new_path": new_catalog_path})
                 self.after(0, lambda: self.load_upload_folder(self.upload_path))
             except Exception as exc:
                 for source, target in reversed(moved):
@@ -438,7 +464,10 @@ class UploadActionsMixin:
         if not item or not messagebox.askyesno("Delete item", f"Delete {item['name']}?\nThis cannot be undone.", parent=self): return
         def worker():
             try:
-                paths = self.storage_walk(item["path"]) if item["type"] == "folder" else [item["path"]]
+                paths = self.storage_walk(item["path"]) if item["type"] == "folder" or item.get("hls_only") else [item["path"]]
+                if item.get("hls_present") and not item.get("hls_only"):
+                    hls_root = f"{item['path'].rsplit('/', 1)[0]}/{Path(item['path']).stem}-hls" if "/" in item["path"] else f"{Path(item['path']).stem}-hls"
+                    paths.extend(self.storage_walk(hls_root))
                 if paths: self.api.storage_delete(paths)
                 self.after(0, lambda: self.load_upload_folder(self.upload_path))
             except Exception as exc: self.after(0, lambda: messagebox.showerror("Delete failed", str(exc), parent=self))

@@ -18,7 +18,7 @@ class UploadsViewMixin:
         self.upload_tree = ttk.Treeview(box, columns=("type", "size", "updated"), show="tree headings", selectmode="browse")
         for column, title in (("#0", "Name"), ("type", "Type"), ("size", "Size"), ("updated", "Updated")): self.upload_tree.heading(column, text=title)
         self.upload_tree.column("#0", width=430); self.upload_tree.column("type", width=110); self.upload_tree.column("size", width=110); self.upload_tree.column("updated", width=180); self.upload_tree.pack(fill="both", expand=True, padx=14, pady=(0, 14))
-        self.upload_tree.bind("<Double-1>", self.open_upload_item); self.upload_tree.bind("<Button-3>", self.show_upload_menu)
+        self.upload_tree.bind("<Double-1>", self.open_upload_item); self.upload_tree.bind("<Button-3>", self.show_upload_menu); self.upload_tree.bind("<Motion>", self.upload_hover); self.upload_tree.bind("<Leave>", lambda _event: self._hide_upload_tooltip())
         self.upload_menu = tk.Menu(self, tearoff=False); self.upload_menu.add_command(label="Open media manager", command=self.open_selected_media_manager); self.upload_menu.add_separator(); self.upload_menu.add_command(label="Rename", command=self.rename_upload_item); self.upload_menu.add_command(label="Delete", command=self.delete_upload_item); self.load_upload_folder(self.upload_path)
 
     def render_upload_breadcrumb(self):
@@ -34,12 +34,24 @@ class UploadsViewMixin:
         self.upload_path = path.strip("/"); self.render_upload_breadcrumb(); [self.upload_tree.delete(item) for item in self.upload_tree.get_children()]; self.upload_status.configure(text="Loading storage...")
         def worker():
             try:
-                entries = self.api.storage_list(self.upload_path); items = []
+                entries = self.api.storage_list(self.upload_path); items = []; hls_folders = {}; source_names = set()
                 for entry in entries:
                     name = entry.get("name") or ""
                     if not name or name == ".emptyFolderPlaceholder": continue
                     metadata = entry.get("metadata") or {}; item_type = "folder" if entry.get("id") is None else "file"; extension = Path(name).suffix.removeprefix(".").lower() or "unknown"
-                    items.append({"name": name, "type": item_type, "type_label": item_type if item_type == "folder" else f"file, {extension}", "path": f"{self.upload_path}/{name}" if self.upload_path else name, "size": metadata.get("size"), "updated_at": entry.get("updated_at") or ""})
+                    if item_type == "folder" and name.endswith("-hls"):
+                        hls_folders[name[:-4].casefold()] = name
+                        continue
+                    path = f"{self.upload_path}/{name}" if self.upload_path else name
+                    if item_type == "file" and Path(name).suffix.lower() in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"}: source_names.add(Path(name).stem.casefold())
+                    items.append({"name": name, "type": item_type, "type_label": item_type if item_type == "folder" else f"file, {extension}", "path": path, "size": metadata.get("size"), "updated_at": entry.get("updated_at") or "", "hls_present": Path(name).stem.casefold() in hls_folders})
+                for item in items:
+                    if item["type"] == "file": item["hls_present"] = Path(item["name"]).stem.casefold() in hls_folders
+                for stem, folder_name in hls_folders.items():
+                    if stem not in source_names:
+                        virtual_name = folder_name[:-4]
+                        virtual_path = f"{self.upload_path}/{folder_name}/index.m3u8" if self.upload_path else f"{folder_name}/index.m3u8"
+                        items.append({"name": virtual_name, "type": "file", "type_label": "HLS video", "path": virtual_path, "size": None, "updated_at": "", "hls_present": True, "hls_only": True})
                 items.sort(key=lambda value: (value["type"] != "folder", value["name"].casefold())); self.after(0, lambda: self.uploads_loaded(self.upload_path, items))
             except Exception as exc: self.after(0, lambda: self.upload_status.configure(text=f"Unable to load storage: {exc}"))
         threading.Thread(target=worker, daemon=True).start()
@@ -48,7 +60,7 @@ class UploadsViewMixin:
         if folder != self.upload_path: return
         self.upload_items = items
         for item in items:
-            size = "Folder" if item["type"] == "folder" else self.format_bytes(item.get("size")); self.upload_tree.insert("", "end", iid=item["path"], text=item["name"], values=(item.get("type_label", item["type"]), size, item.get("updated_at", "")))
+            size = "Folder" if item["type"] == "folder" else self.format_bytes(item.get("size")); icon = "✓ " if item.get("hls_present") else ("⚠ " if item["type"] == "file" and Path(item["name"]).suffix.lower() in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"} else ""); self.upload_tree.insert("", "end", iid=item["path"], text=icon + item["name"], values=(item.get("type_label", item["type"]), size, item.get("updated_at", "")))
         self.upload_status.configure(text=f"{len(items)} item(s) - {self.upload_path or 'Library root'}")
 
     @staticmethod
@@ -64,10 +76,20 @@ class UploadsViewMixin:
     def open_upload_item(self, _=None):
         item = self.selected_upload_item()
         if item and item["type"] == "folder": self.load_upload_folder(item["path"])
+
+    def _hide_upload_tooltip(self):
+        tooltip = getattr(self, "_upload_tooltip", None)
+        if tooltip and tooltip.winfo_exists(): tooltip.destroy()
+
+    def upload_hover(self, event):
+        row = self.upload_tree.identify_row(event.y)
+        item = next((candidate for candidate in self.upload_items if candidate["path"] == row), None)
+        if not item or item.get("hls_present") or item["type"] != "file" or Path(item["name"]).suffix.lower() not in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"}: self._hide_upload_tooltip(); return
+        self._hide_upload_tooltip(); self._upload_tooltip = tk.Toplevel(self); self._upload_tooltip.wm_overrideredirect(True); self._upload_tooltip.wm_geometry(f"+{event.x_root + 16}+{event.y_root + 12}"); tk.Label(self._upload_tooltip, text="Run HLS generation on this video to make it available to every device", bg="#101828", fg="white", padx=8, pady=5).pack()
     def show_upload_menu(self, event):
         item_id = self.upload_tree.identify_row(event.y)
         if not item_id: return
-        self.upload_tree.selection_set(item_id); self.upload_tree.focus(item_id); item = self.selected_upload_item(); is_video = bool(item and item["type"] == "file" and Path(item["name"]).suffix.lower() in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"}); self.upload_menu.entryconfigure(0, state="normal" if is_video else "disabled"); self.upload_menu.tk_popup(event.x_root, event.y_root)
+        self.upload_tree.selection_set(item_id); self.upload_tree.focus(item_id); item = self.selected_upload_item(); is_video = bool(item and item["type"] == "file" and (item.get("hls_only") or Path(item["name"]).suffix.lower() in {".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ogv", ".mpeg", ".mpg", ".ts"})); self.upload_menu.entryconfigure(0, state="normal" if is_video else "disabled"); self.upload_menu.tk_popup(event.x_root, event.y_root)
     def open_selected_media_manager(self):
         item = self.selected_upload_item()
         if item and item["type"] == "file": self.open_media_manager(item)

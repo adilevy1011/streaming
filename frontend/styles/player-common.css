@@ -3,6 +3,7 @@
 .video-player-shell { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; border: 0; border-radius: 0; box-shadow: none; }
 .video-frame { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 0; background: #000; }
 video { display: block; width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
+.playback-error { position: absolute; top: 50%; left: 50%; width: min(90%, 520px); padding: 16px 20px; color: #fff; text-align: center; background: rgba(20, 20, 20, .9); border: 1px solid #b42318; border-radius: 8px; transform: translate(-50%, -50%); z-index: 20; }
 .video-frame.user-idle { cursor: none; }
 .video-frame:fullscreen, .video-frame:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; }
 .video-frame:fullscreen video, .video-frame:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; object-fit: contain; filter: brightness(1.0001); }

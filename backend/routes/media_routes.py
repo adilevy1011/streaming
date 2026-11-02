@@ -205,7 +205,8 @@ def register() -> None:
             f"{line}?token={token_query}" if line.startswith("segment-") else line
             for line in playlist.splitlines()
         ) + "\n"
-        return Response(content=playlist, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "private, max-age=60"})
+        cache_control = "private, max-age=60" if hls.is_complete(safe_path) else "private, no-cache"
+        return Response(content=playlist, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": cache_control})
 
     @app.get("/api/media/hls/{media_path:path}/{segment_name}")
     async def hls_segment(media_path: str, segment_name: str, _: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> Response:

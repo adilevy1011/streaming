@@ -1,4 +1,4 @@
-"""On-demand HLS transcoding and cache helpers."""
+"""Progressive on-demand HLS transcoding and cache helpers."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
@@ -18,13 +19,20 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", str(Path(tempfile.gettempdir()) / "adlv-media-hls")))
-# Bump when the output compatibility settings change so old caches are not
-# reused with a different encoder contract.
-CACHE_VERSION = "hls-v3"
+CACHE_VERSION = "hls-v4"
 FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
-HLS_TRANSCODE_TIMEOUT = int(os.environ.get("HLS_TRANSCODE_TIMEOUT", "3600"))
+HLS_START_TIMEOUT = int(os.environ.get("HLS_START_TIMEOUT", "120"))
+
 _locks: dict[str, threading.Lock] = {}
-_locks_guard = threading.Lock()
+_jobs: dict[str, "_Job"] = {}
+_state_guard = threading.Lock()
+
+
+@dataclass
+class _Job:
+    ready: threading.Event
+    done: threading.Event
+    error: str | None = None
 
 
 def cache_key(media_path: str) -> str:
@@ -36,7 +44,7 @@ def cache_dir(media_path: str) -> Path:
 
 
 def _lock_for(media_path: str) -> threading.Lock:
-    with _locks_guard:
+    with _state_guard:
         return _locks.setdefault(media_path, threading.Lock())
 
 
@@ -45,12 +53,10 @@ def manifest_path(media_path: str) -> Path:
 
 
 def ffmpeg_binary() -> str | None:
-    """Resolve FFmpeg using PATH or an explicit service-friendly path."""
     return shutil.which(FFMPEG_PATH) or (FFMPEG_PATH if Path(FFMPEG_PATH).is_file() else None)
 
 
-def _cache_is_complete(media_path: str) -> bool:
-    """Only reuse a VOD cache when every segment referenced by its playlist exists."""
+def is_complete(media_path: str) -> bool:
     manifest = manifest_path(media_path)
     if not manifest.is_file():
         return False
@@ -59,85 +65,114 @@ def _cache_is_complete(media_path: str) -> bool:
     except OSError:
         return False
     segments = [line for line in lines if line and not line.startswith("#")]
-    return bool(segments) and all(
-        (manifest.parent / line.split("?", 1)[0]).is_file()
-        for line in segments
+    return "#EXT-X-ENDLIST" in lines and bool(segments) and all(
+        (manifest.parent / line.split("?", 1)[0]).is_file() for line in segments
     )
 
 
+def _has_ready_segment(media_path: str) -> bool:
+    manifest = manifest_path(media_path)
+    if not manifest.is_file():
+        return False
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return any(
+        line and not line.startswith("#") and (manifest.parent / line.split("?", 1)[0]).is_file()
+        for line in lines
+    )
+
+
+def _build(media_path: str, media_url: str, headers: dict[str, str], ffmpeg: str, job: _Job) -> None:
+    target = cache_dir(media_path)
+    work_dir = HLS_CACHE_DIR / f".{cache_key(media_path)}-source"
+    source = work_dir / "source"
+    try:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        with httpx.Client(follow_redirects=True, timeout=None) as client:
+            logger.info("Downloading source for HLS: %s", media_path)
+            with client.stream("GET", media_url, headers=headers) as response:
+                if response.status_code >= 400:
+                    raise RuntimeError(f"source download returned HTTP {response.status_code}")
+                with source.open("wb") as output:
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        output.write(chunk)
+
+        target.mkdir(parents=True, exist_ok=True)
+        logger.info("Starting progressive FFmpeg HLS transcode for %s", media_path)
+        command = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30",
+            "-c:v", "libx264", "-preset", os.environ.get("HLS_PRESET", "veryfast"),
+            "-profile:v", "main", "-level:v", "4.0", "-crf", os.environ.get("HLS_CRF", "23"),
+            "-pix_fmt", "yuv420p", "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+            "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "event",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_filename", str(target / "segment-%05d.ts"), str(target / "index.m3u8"),
+        ]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        while True:
+            if _has_ready_segment(media_path):
+                job.ready.set()
+            try:
+                _, stderr = process.communicate(timeout=1)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode != 0:
+            detail = (stderr or "unknown FFmpeg error").strip()[-4000:]
+            logger.error("FFmpeg HLS transcode failed for %s: %s", media_path, detail)
+            raise RuntimeError("FFmpeg failed")
+        job.ready.set()
+        logger.info("HLS generation completed for %s", media_path)
+    except Exception as exc:
+        job.error = str(exc)
+        logger.exception("HLS generation failed for %s", media_path)
+        try:
+            if target.exists():
+                shutil.rmtree(target)
+        except OSError:
+            logger.exception("Unable to clean failed HLS cache for %s", media_path)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        job.done.set()
+        with _state_guard:
+            if _jobs.get(media_path) is job:
+                del _jobs[media_path]
+
+
 def generate(media_path: str, media_url: str, headers: dict[str, str]) -> Path:
-    """Download a source object and create a broadly compatible HLS VOD cache."""
+    """Start or join a progressive VOD transcode and return its playlist."""
     ffmpeg = ffmpeg_binary()
-    logger.info("Starting HLS generation for %s; ffmpeg=%s; cache=%s", media_path, ffmpeg or "not found", HLS_CACHE_DIR)
     if ffmpeg is None:
         raise HTTPException(status_code=503, detail="HLS playback requires ffmpeg on the server.")
-
-    target = cache_dir(media_path)
-    existing = manifest_path(media_path)
-    if _cache_is_complete(media_path):
-        return existing
+    if is_complete(media_path) or _has_ready_segment(media_path):
+        return manifest_path(media_path)
 
     with _lock_for(media_path):
-        if _cache_is_complete(media_path):
-            return existing
-        try:
-            HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.exception("HLS cache directory is not writable: %s", HLS_CACHE_DIR)
-            raise HTTPException(status_code=503, detail="The HLS cache directory is not writable.") from exc
-        with tempfile.TemporaryDirectory(prefix="adlv-hls-") as work_dir:
-            work = Path(work_dir)
-            source = work / "source"
-            partial = work / "output"
-            partial.mkdir()
-            try:
-                with httpx.Client(follow_redirects=True, timeout=None) as client:
-                    logger.info("Downloading source for HLS: %s", media_path)
-                    with client.stream("GET", media_url, headers=headers) as response:
-                        if response.status_code >= 400:
-                            raise HTTPException(status_code=404, detail="Media not found.")
-                        with source.open("wb") as output:
-                            for chunk in response.iter_bytes(1024 * 1024):
-                                output.write(chunk)
-                logger.info("Starting FFmpeg HLS transcode for %s", media_path)
-                command = [
-                    ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
-                    "-map", "0:v:0", "-map", "0:a:0?",
-                    # Keep the single rendition within limits supported by
-                    # older phones and inexpensive browsers. This also makes
-                    # very large sources practical on mobile connections.
-                    "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30",
-                    "-c:v", "libx264", "-preset", os.environ.get("HLS_PRESET", "veryfast"),
-                    # Main/yuv420p is widely hardware-decodable, including on
-                    # older iOS devices. Level 4.0 accommodates 1080p sources.
-                    "-profile:v", "main", "-level:v", "4.0",
-                    "-crf", os.environ.get("HLS_CRF", "23"), "-pix_fmt", "yuv420p",
-                    "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
-                    "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-                    "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
-                    "-hls_flags", "independent_segments",
-                    "-hls_segment_filename", str(partial / "segment-%05d.ts"),
-                    str(partial / "index.m3u8"),
-                ]
-                result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=HLS_TRANSCODE_TIMEOUT)
-                if result.returncode != 0:
-                    logger.error("FFmpeg HLS transcode failed for %s: %s", media_path, (result.stderr or "unknown FFmpeg error").strip()[-4000:])
-                    raise HTTPException(status_code=500, detail="The media could not be converted for streaming.")
-                if not (partial / "index.m3u8").is_file():
-                    raise HTTPException(status_code=500, detail="FFmpeg did not create an HLS manifest.")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if target.exists():
-                    shutil.rmtree(target)
-                shutil.copytree(partial, target)
-                logger.info("HLS generation completed for %s", media_path)
-            except subprocess.TimeoutExpired as exc:
-                logger.error("FFmpeg HLS transcode timed out for %s", media_path)
-                raise HTTPException(status_code=504, detail="The media conversion timed out.") from exc
-            except OSError as exc:
-                logger.exception("Unable to run FFmpeg for %s", media_path)
-                raise HTTPException(status_code=503, detail="HLS playback is unavailable on the server.") from exc
-            except httpx.HTTPError as exc:
-                logger.exception("Unable to download media for HLS transcode: %s", media_path)
-                raise HTTPException(status_code=502, detail="The source media could not be downloaded.") from exc
-    return existing
+        with _state_guard:
+            job = _jobs.get(media_path)
+            if job is None:
+                try:
+                    HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    target = cache_dir(media_path)
+                    if target.exists():
+                        shutil.rmtree(target)
+                except OSError as exc:
+                    logger.exception("HLS cache directory is not writable: %s", HLS_CACHE_DIR)
+                    raise HTTPException(status_code=503, detail="The HLS cache directory is not writable.") from exc
+                job = _Job(threading.Event(), threading.Event())
+                _jobs[media_path] = job
+                threading.Thread(target=_build, args=(media_path, media_url, headers, ffmpeg, job), daemon=True).start()
 
+    deadline = time.monotonic() + HLS_START_TIMEOUT
+    while time.monotonic() < deadline:
+        if _has_ready_segment(media_path):
+            return manifest_path(media_path)
+        if job.done.is_set():
+            raise HTTPException(status_code=500, detail="The media could not be converted for streaming.")
+        time.sleep(0.25)
+    raise HTTPException(status_code=504, detail="The media conversion is taking too long to start.")

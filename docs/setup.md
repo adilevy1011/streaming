@@ -51,8 +51,8 @@ REDIS_URL=redis://localhost:6379/0
 # HLS_CACHE_DIR=/var/cache/adlv-media-hls
 # Optional: absolute path when systemd cannot see ffmpeg on PATH
 # FFMPEG_PATH=/usr/bin/ffmpeg
-# Optional: maximum seconds allowed for one HLS transcode
-# HLS_TRANSCODE_TIMEOUT=3600
+# Optional: maximum seconds to wait for the first HLS segment
+# HLS_START_TIMEOUT=120
 ```
 
 Keep Redis bound to a private interface and do not expose port 6379 to the public internet. The bundled production service uses one Uvicorn worker because resumable upload cursors are currently process-local. If you move those cursors to shared storage, you can scale workers and should configure Redis for shared Watch Together state and rate limits.

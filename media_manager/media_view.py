@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from io import BytesIO
 import subprocess
 import sys
@@ -38,9 +39,26 @@ class MediaViewMixin:
         subtitle_name = tk.Label(subtitle_tab, text="Loading subtitleâ€¦", bg="white", fg=self.MUTED, anchor="w"); subtitle_name.pack(fill="x", padx=18, pady=(18, 8))
         subtitle_name.configure(text="")
         subtitle_loading = ttk.Progressbar(subtitle_tab, mode="indeterminate", length=80, style="Loading.Horizontal.TProgressbar"); subtitle_loading.pack(pady=(0, 12)); subtitle_loading.start(5)
-        subtitle_text = tk.Text(subtitle_tab, wrap="none", undo=True, font=("Consolas", 10)); subtitle_text.pack(fill="both", expand=True, padx=18, pady=(0, 10))
-        subtitle_button = ttk.Button(subtitle_tab, text="Save subtitles", command=lambda: self.save_media_subtitle(state, subtitle_text, subtitle_name, subtitle_button)); subtitle_button.pack(anchor="e", padx=18, pady=(0, 16))
-        state.update({"subtitle_name": subtitle_name, "subtitle_loading": subtitle_loading, "subtitle_text": subtitle_text, "subtitle_button": subtitle_button})
+        subtitle_area = tk.Frame(subtitle_tab, bg="white"); subtitle_area.pack(fill="both", expand=True, padx=18, pady=(0, 10))
+        subtitle_canvas = tk.Canvas(subtitle_area, bg="white", highlightthickness=0)
+        subtitle_scroll = ttk.Scrollbar(subtitle_area, orient="vertical", command=lambda *args: self.scroll_subtitles(state, *args))
+        subtitle_canvas.configure(yscrollcommand=subtitle_scroll.set)
+        subtitle_scroll.pack(side="right", fill="y"); subtitle_canvas.pack(side="left", fill="both", expand=True)
+        subtitle_inner = tk.Frame(subtitle_canvas, bg="white")
+        subtitle_window = subtitle_canvas.create_window((0, 0), window=subtitle_inner, anchor="nw")
+        subtitle_inner.bind("<Configure>", lambda _: subtitle_canvas.configure(scrollregion=subtitle_canvas.bbox("all")))
+        subtitle_canvas.bind("<Configure>", lambda event: (subtitle_canvas.itemconfigure(subtitle_window, width=event.width), self.render_visible_subtitle_cards(state)))
+        state["subtitle_mousewheel_tag"] = f"subtitle-mousewheel-{id(state)}"
+        subtitle_canvas.bind_class(state["subtitle_mousewheel_tag"], "<MouseWheel>", lambda event: self.handle_subtitle_mousewheel(state, event))
+        subtitle_canvas.bind_class(state["subtitle_mousewheel_tag"], "<Button-4>", lambda event: self.handle_subtitle_mousewheel(state, event))
+        subtitle_canvas.bind_class(state["subtitle_mousewheel_tag"], "<Button-5>", lambda event: self.handle_subtitle_mousewheel(state, event))
+        self.bind_subtitle_mousewheel(state, subtitle_canvas)
+        self.bind_subtitle_mousewheel(state, subtitle_inner)
+        window.bind("<Destroy>", lambda event: self.unbind_subtitle_mousewheel(state, event), add="+")
+        subtitle_add = ttk.Button(subtitle_tab, text="Add subtitle", command=lambda: self.add_subtitle_card(state))
+        subtitle_add.pack(anchor="w", padx=18, pady=(0, 8))
+        subtitle_button = ttk.Button(subtitle_tab, text="Save subtitles", command=lambda: self.save_media_subtitle(state, subtitle_name, subtitle_button)); subtitle_button.pack(anchor="e", padx=18, pady=(0, 16))
+        state.update({"subtitle_name": subtitle_name, "subtitle_loading": subtitle_loading, "subtitle_canvas": subtitle_canvas, "subtitle_inner": subtitle_inner, "subtitle_records": [], "subtitle_cards": {}, "subtitle_row_height": 220, "subtitle_add": subtitle_add, "subtitle_button": subtitle_button})
 
         timeline_tab = tk.Frame(notebook, bg="white"); notebook.add(timeline_tab, text="Timeline & credits")
         timeline_info = tk.Label(timeline_tab, text="Loading timelineâ€¦", bg="white", fg=self.MUTED, anchor="w", justify="left"); timeline_info.pack(fill="x", padx=18, pady=(18, 8))
@@ -129,7 +147,7 @@ class MediaViewMixin:
         subtitle_path = video.get("subtitle_path") or ""
         state["subtitle_loading"].stop(); state["subtitle_loading"].pack_forget()
         state["subtitle_name"].configure(text=Path(subtitle_path).name if subtitle_path else "No subtitle file attached yet.")
-        state["subtitle_text"].delete("1.0", "end"); state["subtitle_text"].insert("1.0", data.get("subtitle_content", ""))
+        self.render_subtitle_cards(state, data.get("subtitle_content", ""))
         credit = data.get("credits") or {}; start = credit.get("credits_start_seconds")
         state["credits_input"].delete(0, "end");
         if start is not None: state["credits_input"].insert(0, self.format_seconds(float(start))); state["credits_time"].configure(text=self.format_seconds(float(start)))
@@ -256,12 +274,161 @@ class MediaViewMixin:
             if cell["sheet_index"] != sheet_index: continue
             image = sheet.crop((cell["column"] * cell_width, cell["row"] * cell_height, (cell["column"] + 1) * cell_width, (cell["row"] + 1) * cell_height)); image = image.resize(state["timeline_photo_size"], Image.Resampling.LANCZOS); photo = ImageTk.PhotoImage(image); cell["photo"] = photo; state["timeline_canvas"].itemconfigure(cell["image_item"], image=photo)
 
-    def save_media_subtitle(self, state, text, button, name_label):
-        content = text.get("1.0", "end-1c"); video = state["data"].get("video", {}); current = video.get("subtitle_path") or ""; folder = video.get("folder_path") or state["item"]["path"].rpartition("/")[0]; stem = Path(video.get("name") or state["item"]["name"]).stem; target = current or (f"{folder}/{stem}.srt" if folder else f"{stem}.srt")
+    @staticmethod
+    def parse_srt(content):
+        subtitles = []
+        blocks = [block.strip("\r\n") for block in re.split(r"\n\s*\n", content.replace("\r\n", "\n").replace("\r", "\n")) if block.strip()]
+        for block_number, block in enumerate(blocks, 1):
+            lines = block.split("\n")
+            if len(lines) < 2 or not lines[0].lstrip("\ufeff").strip().isdigit() or "-->" not in lines[1] or not re.fullmatch(r"\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}", lines[1].strip()):
+                raise ValueError(f"Subtitle block {block_number} is missing a valid number or timecode.")
+            subtitles.append({"timecode": lines[1].strip(), "text": "\n".join(lines[2:]).strip()})
+        return subtitles
+
+    def render_subtitle_cards(self, state, content):
+        for card in state.get("subtitle_cards", {}).values(): card["frame"].destroy()
+        if state.get("subtitle_empty"): state["subtitle_empty"].destroy()
+        state["subtitle_cards"] = {}
+        state.pop("subtitle_empty", None)
+        try:
+            subtitles = self.parse_srt(content)
+        except ValueError as error:
+            subtitles = []
+            state["subtitle_error"] = str(error)
+        else:
+            state.pop("subtitle_error", None)
+        state["subtitle_records"] = subtitles
+        state["subtitle_canvas"].yview_moveto(0)
+        self.render_visible_subtitle_cards(state)
+
+    def sync_visible_subtitle_cards(self, state):
+        for index, card in state.get("subtitle_cards", {}).items():
+            if index >= len(state["subtitle_records"]): continue
+            state["subtitle_records"][index]["timecode"] = card["timecode"].get().strip()
+            state["subtitle_records"][index]["text"] = card["text"].get("1.0", "end-1c").strip()
+
+    def render_visible_subtitle_cards(self, state):
+        if "subtitle_canvas" not in state: return
+        self.sync_visible_subtitle_cards(state)
+        for card in state.get("subtitle_cards", {}).values(): card["frame"].destroy()
+        state["subtitle_cards"] = {}
+        inner = state["subtitle_inner"]
+        records = state.get("subtitle_records", [])
+        row_height = state["subtitle_row_height"]
+        width = max(1, state["subtitle_canvas"].winfo_width())
+        total_height = max(row_height, len(records) * row_height)
+        inner.configure(width=width, height=total_height)
+        inner.pack_propagate(False)
+        state["subtitle_canvas"].configure(scrollregion=(0, 0, width, total_height))
+        if not records:
+            message = state.get("subtitle_error") or "No subtitle blocks yet. Add one to get started."
+            empty = tk.Label(inner, text=message, bg="white", fg="#b42318" if state.get("subtitle_error") else self.MUTED, pady=18)
+            empty.place(x=0, y=0, relwidth=1)
+            state["subtitle_empty"] = empty
+            return
+        top = state["subtitle_canvas"].canvasy(0)
+        bottom = top + max(1, state["subtitle_canvas"].winfo_height())
+        first = max(0, int(top // row_height) - 2)
+        last = min(len(records) - 1, int(bottom // row_height) + 2)
+        for index in range(first, last + 1): self.create_visible_subtitle_card(state, index)
+
+    def scroll_subtitles(self, state, *args):
+        state["subtitle_canvas"].yview(*args)
+        self.render_visible_subtitle_cards(state)
+        return "break"
+
+    def bind_subtitle_mousewheel(self, state, widget):
+        tag = state["subtitle_mousewheel_tag"]
+        tags = widget.bindtags()
+        if tag not in tags: widget.bindtags((tag,) + tuple(tags))
+        for child in widget.winfo_children(): self.bind_subtitle_mousewheel(state, child)
+
+    def handle_subtitle_mousewheel(self, state, event):
+        if event.num == 4: amount = -1
+        elif event.num == 5: amount = 1
+        else: amount = -1 if event.delta > 0 else 1
+        return self.scroll_subtitles(state, "scroll", amount, "units")
+
+    def unbind_subtitle_mousewheel(self, state, event):
+        if event.widget is state["window"]:
+            canvas = state.get("subtitle_canvas")
+            if canvas and canvas.winfo_exists():
+                for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"): canvas.unbind_class(state["subtitle_mousewheel_tag"], sequence)
+
+    def create_visible_subtitle_card(self, state, index):
+        subtitle = state["subtitle_records"][index]
+        record = subtitle
+        frame = tk.Frame(state["subtitle_inner"], bg="#f8fafc", highlightbackground="#d0d5dd", highlightthickness=1, padx=12, pady=10, height=state["subtitle_row_height"] - 10)
+        frame.place(x=0, y=index * state["subtitle_row_height"], relwidth=1)
+        frame.pack_propagate(False)
+        header = tk.Frame(frame, bg="#f8fafc"); header.pack(fill="x")
+        number = tk.Label(header, text=str(index + 1), bg="#f8fafc", fg="#344054", font=("Segoe UI", 11, "bold"), width=4, anchor="w"); number.pack(side="left")
+        ttk.Button(header, text="Add above", command=lambda card_record=record: self.add_subtitle_card(state, self.subtitle_record_index(state, card_record))).pack(side="right")
+        ttk.Button(header, text="Add below", command=lambda card_record=record: self.add_subtitle_card(state, self.subtitle_record_index(state, card_record) + 1)).pack(side="right", padx=(0, 6))
+        ttk.Button(header, text="Delete", command=lambda card_record=record: self.delete_subtitle_card(state, card_record)).pack(side="right", padx=(0, 6))
+        tk.Label(frame, text="Timecode", bg="#f8fafc", fg=self.MUTED, anchor="w").pack(fill="x", pady=(8, 2))
+        timecode = ttk.Entry(frame); timecode.pack(fill="x")
+        timecode.insert(0, subtitle.get("timecode", ""))
+        tk.Label(frame, text="Subtitle text", bg="#f8fafc", fg=self.MUTED, anchor="w").pack(fill="x", pady=(8, 2))
+        text = tk.Text(frame, height=4, wrap="word", undo=True, font=("Segoe UI", 10)); text.pack(fill="both", expand=True)
+        text.insert("1.0", subtitle.get("text", ""))
+        self.bind_subtitle_mousewheel(state, frame)
+        state["subtitle_cards"][index] = {"frame": frame, "number": number, "timecode": timecode, "text": text}
+
+    @staticmethod
+    def subtitle_record_index(state, record):
+        for index, candidate in enumerate(state["subtitle_records"]):
+            if candidate is record: return index
+        return -1
+
+    def add_subtitle_card(self, state, index=None):
+        self.sync_visible_subtitle_cards(state)
+        state.pop("subtitle_error", None)
+        index = len(state.get("subtitle_records", [])) if index is None else index
+        state["subtitle_records"].insert(index, {"timecode": "00:00:00,000 --> 00:00:00,000", "text": ""})
+        self.invalidate_visible_subtitle_cards(state)
+        self.mark_subtitles_dirty(state)
+        self.after_idle(lambda: self.render_visible_subtitle_cards(state))
+
+    def delete_subtitle_card(self, state, record):
+        self.sync_visible_subtitle_cards(state)
+        index = self.subtitle_record_index(state, record)
+        if index < 0: return
+        state["subtitle_records"].pop(index)
+        self.invalidate_visible_subtitle_cards(state)
+        state.pop("subtitle_error", None)
+        self.mark_subtitles_dirty(state)
+        self.after_idle(lambda: self.render_visible_subtitle_cards(state))
+
+    @staticmethod
+    def invalidate_visible_subtitle_cards(state):
+        for card in state.get("subtitle_cards", {}).values(): card["frame"].destroy()
+        state["subtitle_cards"] = {}
+
+    def mark_subtitles_dirty(self, state):
+        state["subtitle_dirty"] = True
+        current_name = state["subtitle_name"].cget("text")
+        if current_name and not current_name.endswith(" (unsaved changes)"):
+            state["subtitle_name"].configure(text=f"{current_name} (unsaved changes)")
+
+    def serialize_subtitles(self, state):
+        self.sync_visible_subtitle_cards(state)
+        blocks = []
+        for index, subtitle in enumerate(state.get("subtitle_records", []), 1):
+            timecode = subtitle.get("timecode", "").strip()
+            if not re.fullmatch(r"\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}", timecode): raise ValueError(f"Subtitle {index} needs a timecode like 00:00:00,000 --> 00:00:01,000.")
+            text = subtitle.get("text", "").strip()
+            blocks.append(f"{index}\n{timecode}\n{text}" if text else f"{index}\n{timecode}")
+        return "\n\n".join(blocks) + ("\n\n" if blocks else "")
+
+    def save_media_subtitle(self, state, name_label, button):
+        try: content = self.serialize_subtitles(state)
+        except ValueError as error: messagebox.showerror("Invalid subtitles", str(error), parent=state["window"]); return
+        video = state["data"].get("video", {}); current = video.get("subtitle_path") or ""; folder = video.get("folder_path") or state["item"]["path"].rpartition("/")[0]; stem = Path(video.get("name") or state["item"]["name"]).stem; target = current or (f"{folder}/{stem}.srt" if folder else f"{stem}.srt")
         button.configure(state="disabled", text="Savingâ€¦")
         def worker():
             try:
-                self.api.put_object(target, content.encode("utf-8"), "text/plain; charset=utf-8"); self.api.request("PATCH", "/rest/v1/videos", params={"path": f"eq.{state['item']['path']}"}, body={"subtitle_path": target}); self.after(0, lambda: (name_label.configure(text=Path(target).name), button.configure(state="normal", text="Saved")))
+                self.api.put_object(target, content.encode("utf-8"), "text/plain; charset=utf-8"); self.api.request("PATCH", "/rest/v1/videos", params={"path": f"eq.{state['item']['path']}"}, body={"subtitle_path": target}); self.after(0, lambda: (state.update({"subtitle_dirty": False}), name_label.configure(text=Path(target).name), button.configure(state="normal", text="Saved")))
             except Exception as exc: self.after(0, lambda error=exc: (button.configure(state="normal", text="Save subtitles"), messagebox.showerror("Subtitle save failed", str(error), parent=state["window"])))
         threading.Thread(target=worker, daemon=True).start()
 

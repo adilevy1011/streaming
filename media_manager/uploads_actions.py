@@ -7,10 +7,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 try:
-    import cairosvg
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageDraw, ImageTk
 except (ImportError, OSError):
-    cairosvg = Image = ImageTk = None
+    Image = ImageDraw = ImageTk = None
 
 try:
     from .supabase_client import UploadCancelled, UploadPaused
@@ -21,6 +20,16 @@ except ImportError:
 
 
 class UploadActionsMixin:
+    _UPLOAD_QUEUE_STATUS_ICONS = {
+        "Queued": "queued",
+        "Uploading": "uploading",
+        "Pausing...": "stop",
+        "Paused": "stop",
+        "Removing...": "remove",
+        "Complete": "task-complete",
+        "Failed": "error",
+    }
+
     def _upload_queue_icon(self, name):
         """Load one of the queue SVGs as a Tk image and keep it alive."""
         icons = getattr(self, "upload_queue_icons", None)
@@ -28,19 +37,62 @@ class UploadActionsMixin:
             icons = self.upload_queue_icons = {}
         if name in icons:
             return icons[name]
-        if cairosvg is None or ImageTk is None:
+        if Image is None or ImageTk is None:
             return None
         icon_path = Path(__file__).with_name("icons") / f"{name}.svg"
         try:
+            # Import CairoSVG lazily.  Its optional native Cairo dependency can
+            # be unavailable until the queue is opened, and should not disable
+            # the rest of the media manager at import time.
+            import cairosvg
+
             png = cairosvg.svg2png(url=str(icon_path), output_width=20, output_height=20)
             icons[name] = ImageTk.PhotoImage(Image.open(BytesIO(png)).convert("RGBA"))
         except Exception:
-            return None
+            # CairoSVG needs a native Cairo library on Windows.  Keep the SVG
+            # files as the source of truth, but provide a small Pillow vector
+            # fallback so the queue never regresses to text-only controls when
+            # that optional native library is absent.
+            if ImageDraw is None:
+                return None
+            image = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            if name == "start":
+                draw.polygon((5, 3, 16, 10, 5, 17), fill="#32cd32")
+            elif name == "stop":
+                draw.rectangle((4, 4, 16, 16), fill="#667085")
+            elif name == "remove":
+                draw.line((5, 5, 15, 15), fill="#d92d20", width=2)
+                draw.line((15, 5, 5, 15), fill="#d92d20", width=2)
+            elif name == "task-complete":
+                draw.ellipse((2, 2, 18, 18), fill="#12b76a")
+                draw.line((5, 10, 8, 13), fill="white", width=2)
+                draw.line((8, 13, 15, 6), fill="white", width=2)
+            elif name == "error":
+                draw.ellipse((2, 2, 18, 18), fill="#f04438")
+                draw.rectangle((9, 5, 11, 11), fill="white")
+                draw.ellipse((9, 13, 11, 15), fill="white")
+            elif name == "warning":
+                draw.polygon((10, 2, 19, 18, 1, 18), fill="#f79009")
+                draw.rectangle((9, 8, 11, 13), fill="white")
+                draw.ellipse((9, 15, 11, 17), fill="white")
+            else:
+                draw.ellipse((2, 2, 18, 18), outline="#667085", width=2)
+                draw.arc((5, 5, 15, 15), 20, 340, fill="#667085", width=2)
+            icons[name] = ImageTk.PhotoImage(image)
         return icons[name]
 
     def _queue_icon_label(self, parent, icon_name, status):
         image = self._upload_queue_icon(icon_name)
-        label = tk.Label(parent, image=image, text="" if image else status, width=3 if image else 12, anchor="w", fg="#667085")
+        label = tk.Label(
+            parent,
+            image=image,
+            text="" if image else status,
+            width=20 if image else 12,
+            height=20 if image else 1,
+            anchor="center" if image else "w",
+            fg="#667085",
+        )
         if image:
             label.image = image
         label.bind("<Enter>", lambda _event: self._show_queue_tooltip(label, status))
@@ -232,17 +284,12 @@ class UploadActionsMixin:
             row.pack(fill="x", pady=3)
             row.grid_columnconfigure(0, weight=1)
             tk.Label(row, text=item["path"].name, anchor="w").grid(row=0, column=0, sticky="ew")
-            status_icons = {
-                "Queued": "queued",
-                "Uploading": "uploading",
-                "Pausing...": "stop",
-                "Paused": "stop",
-                "Removing...": "remove",
-                "Complete": "task-complete",
-                "Failed": "error",
-            }
-            status_label = self._queue_icon_label(row, status_icons.get(item["status"], "error"), item["status"])
-            status_label.grid(row=0, column=1, padx=10)
+            status_label = self._queue_icon_label(
+                row,
+                self._UPLOAD_QUEUE_STATUS_ICONS.get(item["status"], "warning"),
+                item["status"],
+            )
+            status_label.grid(row=0, column=1, padx=(2, 6))
             progress = ttk.Progressbar(row, mode="determinate", maximum=100, value=item["progress"], length=180)
             progress.grid(row=0, column=2, padx=8)
             tk.Label(row, text=f"{item['progress']}%", width=5, anchor="e").grid(row=0, column=3)

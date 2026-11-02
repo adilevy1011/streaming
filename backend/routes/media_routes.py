@@ -9,13 +9,15 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, HTTPException, Query, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 try:
     import core as api
+    import hls
 except ImportError:
     from .. import core as api
+    from .. import hls
 
 TV_SHOW_ROOT_NAMES = {"shows", "show", "tv shows", "tv-shows", "tvshows", "series", "tv"}
 
@@ -190,3 +192,28 @@ def register() -> None:
                 await client.aclose()
 
         return StreamingResponse(stream(), status_code=upstream.status_code, headers=response_headers)
+
+    @app.get("/api/media/hls/{media_path:path}/index.m3u8")
+    async def hls_manifest(media_path: str, _: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> Response:
+        safe_path = api.validate_media_path(media_path)
+        api.ensure_video_access(token, safe_path)
+        media_url = f"{api.SUPABASE_URL}/storage/v1/object/{api.MEDIA_BUCKET}/{quote(safe_path, safe='/')}"
+        manifest = await run_in_threadpool(hls.generate, safe_path, media_url, api.supabase_headers(token))
+        playlist = manifest.read_text(encoding="utf-8")
+        token_query = quote(token, safe="")
+        playlist = "\n".join(
+            f"{line}?token={token_query}" if line.startswith("segment-") else line
+            for line in playlist.splitlines()
+        ) + "\n"
+        return Response(content=playlist, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "private, max-age=60"})
+
+    @app.get("/api/media/hls/{media_path:path}/{segment_name}")
+    async def hls_segment(media_path: str, segment_name: str, _: Any = Depends(api.current_user), token: str = Depends(api.current_token)) -> Response:
+        safe_path = api.validate_media_path(media_path)
+        api.ensure_video_access(token, safe_path)
+        if not segment_name.startswith("segment-") or not segment_name.endswith(".ts"):
+            raise HTTPException(status_code=404, detail="HLS segment not found.")
+        segment = hls.cache_dir(safe_path) / segment_name
+        if not segment.is_file():
+            raise HTTPException(status_code=404, detail="HLS segment not found.")
+        return FileResponse(segment, media_type="video/mp2t", headers={"Cache-Control": "private, max-age=86400"})

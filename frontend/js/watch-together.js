@@ -138,7 +138,7 @@ function applyRoomState(state) {
         const videoName = (loadedVideoPath.split('/').pop() || loadedVideoPath).replace(/\.[^.]+$/, '');
         videoTitle.innerText = videoName;
         document.title = `${videoName} | Watch Together | Adlv Media Stream`;
-        player.src = `/api/media/file/${loadedVideoPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}`;
+        setStreamingSource(player, loadedVideoPath, token);
         loadSubtitles(loadedVideoPath);
         loadTimelinePreview(loadedVideoPath);
     }

@@ -757,9 +757,8 @@ async function startWatching() {
     libraryButton.onclick = returnToLibrary;
     if (!roomId) void loadNextVideo();
     
-    player.src = `/api/media/file/${path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(getAccessToken())}`;
+    setStreamingSource(player, path, getAccessToken());
     player.preload = 'auto';
-    player.load();
     player.onloadedmetadata = () => {
         if (!previewManifest && Number.isFinite(player.duration)) previewTimeline.max = String(player.duration);
         timelineShell.classList.remove('hidden');

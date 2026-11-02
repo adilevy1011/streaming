@@ -38,9 +38,9 @@ button:hover { filter: brightness(1.08); }
     .player-back-button { top: 8px; left: 8px; width: 46px; height: 46px; font-size: 1.45rem; }
     .timeline-shell { padding: 6px 8px; }
     .player-controls { gap: 3px; }
-    .player-controls button { min-width: 30px; min-height: 30px; font-size: 1.1rem; }
+    .player-controls button { min-width: 44px; min-height: 44px; padding: 8px; font-size: 1.1rem; line-height: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     .player-time { min-width: 76px; font-size: .7rem; }
-    .volume-control { width: 58px; }
+    .volume-control { width: 58px; min-height: 44px; touch-action: manipulation; }
     .player-controls #fullscreen-toggle { display: none; }
 }
 @media (max-width: 700px) and (orientation: portrait) {

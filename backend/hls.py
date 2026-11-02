@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
 
 HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", str(Path(tempfile.gettempdir()) / "adlv-media-hls")))
 # Bump when the output compatibility settings change so old caches are not
@@ -109,14 +111,24 @@ def generate(media_path: str, media_url: str, headers: dict[str, str]) -> Path:
                     "-hls_segment_filename", str(partial / "segment-%05d.ts"),
                     str(partial / "index.m3u8"),
                 ]
-                subprocess.run(command, check=True, timeout=None)
+                result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=None)
+                if result.returncode != 0:
+                    logger.error("FFmpeg HLS transcode failed for %s: %s", media_path, (result.stderr or "unknown FFmpeg error").strip()[-4000:])
+                    raise HTTPException(status_code=500, detail="The media could not be converted for streaming.")
                 if not (partial / "index.m3u8").is_file():
                     raise HTTPException(status_code=500, detail="FFmpeg did not create an HLS manifest.")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists():
                     shutil.rmtree(target)
                 shutil.copytree(partial, target)
-            except subprocess.CalledProcessError as exc:
-                raise HTTPException(status_code=500, detail="The media could not be converted for streaming.") from exc
+            except subprocess.TimeoutExpired as exc:
+                logger.error("FFmpeg HLS transcode timed out for %s", media_path)
+                raise HTTPException(status_code=504, detail="The media conversion timed out.") from exc
+            except OSError as exc:
+                logger.exception("Unable to run FFmpeg for %s", media_path)
+                raise HTTPException(status_code=503, detail="HLS playback is unavailable on the server.") from exc
+            except httpx.HTTPError as exc:
+                logger.exception("Unable to download media for HLS transcode: %s", media_path)
+                raise HTTPException(status_code=502, detail="The source media could not be downloaded.") from exc
     return existing
 

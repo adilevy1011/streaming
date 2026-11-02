@@ -44,7 +44,9 @@ function setStreamingSource(player, mediaPath, token) {
     if (player.canPlayType('application/vnd.apple.mpegurl')) {
         player.addEventListener('error', () => {
             console.error('Native HLS playback error', player.error);
-            showPlaybackError(player);
+            if (!tryWindowsDirectFallback(player, encodedPath, token, player.error?.message)) {
+                showPlaybackError(player);
+            }
         }, { once: true });
         player.src = manifest;
         player.load();

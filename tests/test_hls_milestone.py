@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from backend.catalog_safety import filter_cached_media, filter_catalog_videos, is_hls_manifest_path, is_hls_segment_path, validate_hls_playlist
-from media_manager.hls_generator import EVENT_VERSION, StorageUploadError, hls_prefix, is_retryable_upload_error, retry_delay_seconds, validate_local_source
+from media_manager.hls_generator import EVENT_VERSION, StorageUploadError, checkpoint_identity, hls_prefix, is_retryable_upload_error, retry_delay_seconds, validate_local_source, verified_segments
 
 
 class HlsMilestoneTests(unittest.TestCase):
@@ -56,6 +56,12 @@ class HlsMilestoneTests(unittest.TestCase):
         self.assertTrue(is_retryable_upload_error(StorageUploadError("rate limited", 429)))
         self.assertFalse(is_retryable_upload_error(StorageUploadError("unauthorized", 401)))
         self.assertEqual(retry_delay_seconds(StorageUploadError("retry", 503, 2), 1), 2)
+
+    def test_resume_identity_and_remote_size_reconciliation(self):
+        identity = checkpoint_identity("Movies/Film.mp4", 123, 456)
+        self.assertEqual(identity["format"], "hls-v6")
+        expected = {"segment-00000.ts": 10, "segment-00001.ts": 20}
+        self.assertEqual(verified_segments(expected, {"segment-00000.ts": 10, "segment-00001.ts": 19}), {"segment-00000.ts": 10})
 
 
 if __name__ == "__main__":

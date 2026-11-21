@@ -29,6 +29,8 @@ DEFAULT_UPLOAD_WORKERS = 1
 DEFAULT_MAX_RETRIES = 5
 RETRY_BASE_SECONDS = 1.0
 RETRY_MAX_SECONDS = 30.0
+CHECKPOINT_VERSION = 1
+STORAGE_LIST_PAGE_SIZE = 1000
 
 
 class StorageUploadError(RuntimeError):
@@ -92,6 +94,75 @@ def validate_local_source(path: str | Path, expected_size: int | None = None, ex
     if expected_mtime_ns is not None and stat.st_mtime_ns != expected_mtime_ns:
         raise RuntimeError(f"Local HLS source changed after upload: {source}")
     return source
+
+
+def checkpoint_path(video: str, source_size: int, source_mtime_ns: int) -> Path:
+    state_root = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_STATE_HOME") or tempfile.gettempdir()
+    identity = f"{CACHE_VERSION}:{video}:{source_size}:{source_mtime_ns}".encode("utf-8")
+    return Path(state_root) / "ADLV Media Manager" / "hls-checkpoints" / (hashlib.sha256(identity).hexdigest() + ".json")
+
+
+def checkpoint_identity(video: str, source_size: int, source_mtime_ns: int) -> dict[str, object]:
+    return {"video": video, "format": CACHE_VERSION, "source_size": source_size, "source_mtime_ns": source_mtime_ns}
+
+
+def load_checkpoint(path: Path, identity: dict[str, object]) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"version": CHECKPOINT_VERSION, "identity": identity, "segments": {}, "completed": {}, "phase": "preparing_source"}
+    if payload.get("version") != CHECKPOINT_VERSION or payload.get("identity") != identity:
+        return {"version": CHECKPOINT_VERSION, "identity": identity, "segments": {}, "completed": {}, "phase": "preparing_source"}
+    return payload
+
+
+def write_checkpoint(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload["version"] = CHECKPOINT_VERSION
+    payload["updated_at"] = time.time()
+    temporary = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    temporary.replace(path)
+
+
+def remote_segment_sizes(supabase_url: str, key: str, bucket: str, prefix: str) -> dict[str, int]:
+    """List every object under a prefix; Storage listing is paginated."""
+    url = f"{supabase_url.rstrip('/')}/storage/v1/object/list/{quote(bucket, safe='')}"
+    result: dict[str, int] = {}
+    offset = 0
+    while True:
+        body = json.dumps({"prefix": prefix, "limit": STORAGE_LIST_PAGE_SIZE, "offset": offset, "sortBy": {"column": "name", "order": "asc"}}).encode("utf-8")
+        headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        try:
+            with urlopen(Request(url, data=body, headers=headers, method="POST"), timeout=120) as response:
+                page = json.loads(response.read().decode("utf-8") or "[]")
+        except (HTTPError, URLError, ValueError) as exc:
+            raise RuntimeError(f"Storage listing failed for {prefix}: {exc}") from exc
+        if not isinstance(page, list):
+            raise RuntimeError(f"Storage listing returned an invalid page for {prefix}.")
+        for entry in page:
+            name = str(entry.get("name") or "")
+            if name.startswith(prefix + "/"):
+                name = name[len(prefix) + 1:]
+            metadata = entry.get("metadata") or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
+            size = entry.get("size") or metadata.get("size")
+            if name.startswith("segment-") and name.endswith(".ts") and size is not None:
+                try:
+                    result[name] = int(size)
+                except (TypeError, ValueError):
+                    continue
+        if len(page) < STORAGE_LIST_PAGE_SIZE:
+            return result
+        offset += STORAGE_LIST_PAGE_SIZE
+
+
+def verified_segments(expected: dict[str, int], remote: dict[str, int]) -> dict[str, int]:
+    return {name: size for name, size in expected.items() if remote.get(name) == size}
 
 
 def encoded_path(path: str) -> str:
@@ -183,6 +254,11 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
                 shutil.copyfileobj(response, destination, length=1024 * 1024)
             emit_event(job_id, "preparing_source", "completed", source="remote")
 
+        source_stat = source.stat()
+        identity = checkpoint_identity(video, source_stat.st_size, source_stat.st_mtime_ns)
+        checkpoint = checkpoint_path(video, source_stat.st_size, source_stat.st_mtime_ns)
+        checkpoint_data = load_checkpoint(checkpoint, identity)
+
         command = [
             ffmpeg, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:2", "-y", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
@@ -212,10 +288,18 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
         manifest = (output / "index.m3u8").read_bytes()
         segments = sorted(output.glob("segment-*.ts"))
         total_bytes = sum(segment.stat().st_size for segment in segments)
-        completed_bytes = 0
+        expected_sizes = {segment.name: segment.stat().st_size for segment in segments}
+        checkpoint_data["segments"] = expected_sizes
+        checkpoint_data["phase"] = "uploading_segments"
+        remote_sizes = remote_segment_sizes(supabase_url, key, bucket, prefix)
+        verified = verified_segments(expected_sizes, remote_sizes)
+        checkpoint_data["completed"] = verified
+        write_checkpoint(checkpoint, checkpoint_data)
+        completed_bytes = sum(verified.values())
+        completed_segments = len(verified)
         workers = upload_workers()
         retries = max_retries()
-        emit_event(job_id, "uploading_segments", "started", total_segments=len(segments), total_bytes=total_bytes, completed_segments=0, completed_bytes=0, workers=workers, max_retries=retries)
+        emit_event(job_id, "uploading_segments", "started", total_segments=len(segments), total_bytes=total_bytes, completed_segments=completed_segments, completed_bytes=completed_bytes, verified_segments=completed_segments, missing_segments=len(segments) - completed_segments, workers=workers, max_retries=retries)
 
         def upload_segment(index: int, segment: Path) -> tuple[int, str, int, int]:
             body = segment.read_bytes()
@@ -229,22 +313,37 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
             return index, segment.name, len(body), retry_count
 
         if workers == 1:
-            results = (upload_segment(index, segment) for index, segment in enumerate(segments, 1))
-            for index, name, size, retry_count in results:
+            for index, segment in enumerate(segments, 1):
+                if segment.name in verified:
+                    emit_event(job_id, "uploading_segments", "progress", segment=segment.name, segment_index=index, total_segments=len(segments), completed_segments=completed_segments, total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=0, resumed=True)
+                    continue
+                _, name, size, retry_count = upload_segment(index, segment)
                 completed_bytes += size
-                emit_event(job_id, "uploading_segments", "progress", segment=name, segment_index=index, total_segments=len(segments), completed_segments=(index if workers == 1 else 0), total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=retry_count)
+                completed_segments += 1
+                verified[name] = size
+                checkpoint_data["completed"] = verified
+                write_checkpoint(checkpoint, checkpoint_data)
+                emit_event(job_id, "uploading_segments", "progress", segment=name, segment_index=index, total_segments=len(segments), completed_segments=completed_segments, total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=retry_count)
         else:
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hls-upload") as executor:
-                futures = [executor.submit(upload_segment, index, segment) for index, segment in enumerate(segments, 1)]
-                completed_segments = 0
+                futures = [executor.submit(upload_segment, index, segment) for index, segment in enumerate(segments, 1) if segment.name not in verified]
                 for future in as_completed(futures):
                     index, name, size, retry_count = future.result()
                     completed_segments += 1
                     completed_bytes += size
+                    verified[name] = size
+                    checkpoint_data["completed"] = verified
+                    write_checkpoint(checkpoint, checkpoint_data)
                     emit_event(job_id, "uploading_segments", "progress", segment=name, segment_index=index, total_segments=len(segments), completed_segments=completed_segments, total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=retry_count)
         emit_event(job_id, "finalizing_manifest", "started")
+        checkpoint_data["phase"] = "finalizing_manifest"
+        write_checkpoint(checkpoint, checkpoint_data)
         upload_with_retries(manifest_url, key, manifest, "application/vnd.apple.mpegurl", retries)
         emit_event(job_id, "finalizing_manifest", "completed")
+        try:
+            checkpoint.unlink()
+        except FileNotFoundError:
+            pass
     emit_event(job_id, "complete", "complete", overall_percent=100)
 
 

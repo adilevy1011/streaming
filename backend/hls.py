@@ -9,6 +9,10 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
+try:
+    from catalog_safety import validate_hls_playlist
+except ImportError:
+    from .catalog_safety import validate_hls_playlist
 
 HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", str(Path(os.getenv("TMPDIR", "/tmp")) / "adlv-media-hls")))
 CACHE_VERSION = "hls-v6"
@@ -53,9 +57,13 @@ def is_complete(media_path: str) -> bool:
     if not path.is_file():
         return False
     try:
-        return "#EXT-X-ENDLIST" in path.read_text(encoding="utf-8")
+        return validate_playlist(path.read_text(encoding="utf-8"))
     except OSError:
         return False
+
+
+def validate_playlist(text: str, segment_exists=None) -> bool:
+    return validate_hls_playlist(text, segment_exists)
 
 
 def generate(media_path: str, _media_url: str, headers: dict[str, str]) -> Path:
@@ -73,6 +81,31 @@ def generate(media_path: str, _media_url: str, headers: dict[str, str]) -> Path:
         raise HTTPException(status_code=404, detail="HLS has not been generated for this video yet.")
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail="HLS storage returned an error.")
+    if not validate_playlist(response.text, lambda name: _segment_available(media_path, name, headers)):
+        raise HTTPException(status_code=404, detail="The HLS rendition is incomplete.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(response.text, encoding="utf-8")
     return path
+
+
+def _segment_available(media_path: str, segment_name: str, headers: dict[str, str]) -> bool:
+    try:
+        response = httpx.head(storage_segment_url(media_path, segment_name), headers=headers, timeout=30)
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 400
+
+
+def remote_manifest_is_complete(media_path: str, headers: dict[str, str]) -> bool:
+    """Validate a publication marker before exposing an HLS-only catalog row."""
+    try:
+        response = httpx.get(
+            f"{SUPABASE_URL}/storage/v1/object/{MEDIA_BUCKET}/{quote(_storage_path(media_path), safe='/')}",
+            headers=headers,
+            timeout=30,
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 400 and validate_playlist(
+        response.text, lambda name: _segment_available(media_path, name, headers)
+    )

@@ -51,6 +51,7 @@ function setStreamingSource(player, mediaPath, token) {
     }
     hidePlaybackError(player);
     delete player.dataset.directFallback;
+    const isHlsVirtualPath = /-hls\/index\.m3u8$/i.test(mediaPath);
     const encodedPath = mediaPath.split('/').map(encodeURIComponent).join('/');
     const manifest = `/api/media/hls/${encodedPath}/index.m3u8?token=${encodeURIComponent(token)}`;
     player.removeAttribute('src');
@@ -58,9 +59,8 @@ function setStreamingSource(player, mediaPath, token) {
     if (player.canPlayType('application/vnd.apple.mpegurl')) {
         player.addEventListener('error', () => {
             console.error('Native HLS playback error', player.error);
-            if (!tryDirectFallback(player, encodedPath, token, player.error?.message)) {
-                showPlaybackError(player);
-            }
+            if (!isHlsVirtualPath && tryDirectFallback(player, encodedPath, token, player.error?.message)) return;
+            showPlaybackError(player);
         }, { once: true });
         player.src = manifest;
         player.load();
@@ -80,7 +80,8 @@ function setStreamingSource(player, mediaPath, token) {
         };
         const fallbackFromHls = reason => {
             destroyHls();
-            if (!tryDirectFallback(player, encodedPath, token, reason)) showPlaybackError(player);
+            if (!isHlsVirtualPath && tryDirectFallback(player, encodedPath, token, reason)) return;
+            showPlaybackError(player);
         };
         hls.on(Hls.Events.MEDIA_ATTACHED, () => {
             if (activeHls === hls) hls.loadSource(manifest);
@@ -123,6 +124,10 @@ function setStreamingSource(player, mediaPath, token) {
     // Some desktop browsers can still decode the original file even when they
     // do not support HLS. Keep that useful fallback, while HLS remains the
     // normal path for incompatible containers such as MKV on iOS.
+    if (isHlsVirtualPath) {
+        showPlaybackError(player);
+        return;
+    }
     player.addEventListener('error', () => showPlaybackError(player), { once: true });
     player.src = directMediaUrl(encodedPath, token);
     player.load();

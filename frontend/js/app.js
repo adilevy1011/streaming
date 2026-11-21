@@ -14,7 +14,7 @@ let mediaRenderScheduled = false;
 let mediaLoadAbortController = null;
 let refreshMessageTimer = null;
 const PROGRESS_STORAGE_KEY = 'adlv-video-progress';
-const MEDIA_CACHE_KEY = 'adlv-media-library-cache';
+const MEDIA_CACHE_KEY = 'adlv-media-library-cache:v2';
 const TV_SHOW_ROOT_NAMES = new Set(['shows', 'show', 'tv shows', 'tv-shows', 'tvshows', 'series', 'tv']);
 
 function normalizedRootName(path) {
@@ -169,11 +169,15 @@ function loadCachedMedia() {
     if (!currentUserId) return [];
     try {
         const cached = JSON.parse(localStorage.getItem(getMediaCacheKey()) || '[]');
-        return Array.isArray(cached) ? cached.filter(file => file?.path && file?.name) : [];
+        return Array.isArray(cached) ? cached.filter(file => file?.path && file?.name && !isHlsSegmentPath(file.path)) : [];
     } catch (error) {
         console.warn('Unable to read cached media library', error);
         return [];
     }
+}
+
+function isHlsSegmentPath(path) {
+    return /(^|\/)[^/]+-hls\/segment-[0-9]+\.ts$/i.test(path || '');
 }
 
 function saveCachedMedia(media) {
@@ -232,6 +236,7 @@ async function loadMedia(options = {}) {
                 listElement.innerHTML = '';
                 status.innerHTML = '';
             }
+            if (isHlsSegmentPath(video.path)) continue;
             const root = mediaCategory(video);
             const isNewRoot = !streamedRoots.has(root);
             streamedRoots.add(root);
@@ -616,7 +621,7 @@ function renderRecentlyAdded() {
     const list = document.getElementById('recently-added-list');
     list.innerHTML = '';
     const items = allMedia
-        .filter(file => file?.path)
+        .filter(file => file?.path && !isHlsSegmentPath(file.path))
         .slice()
         .sort((left, right) => new Date(right.uploadedAt || 0) - new Date(left.uploadedAt || 0))
         .slice(0, 3);

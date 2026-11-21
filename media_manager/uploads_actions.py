@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import subprocess
 import sys
+import json
 import tkinter as tk
 from io import BytesIO
 from pathlib import Path
@@ -30,6 +31,7 @@ class UploadActionsMixin:
         "Removing...": "remove",
         "Complete": "task-complete",
         "Failed": "error",
+        "Cancelled": "remove",
     }
 
     def _upload_queue_icon(self, name):
@@ -246,6 +248,10 @@ class UploadActionsMixin:
             "pause_requested": threading.Event(),
             "cancel_requested": threading.Event(),
             "upload_state": {},
+            "phase": "Queued",
+            "progress_state": {},
+            "source_size": local_path.stat().st_size,
+            "source_mtime_ns": local_path.stat().st_mtime_ns,
         }
         self.upload_queue.append(item)
         self.open_upload_queue()
@@ -300,6 +306,7 @@ class UploadActionsMixin:
             progress = ttk.Progressbar(row, mode="determinate", maximum=100, value=item["progress"], length=180)
             progress.grid(row=0, column=2, padx=8)
             tk.Label(row, text=f"{item['progress']}%", width=5, anchor="e").grid(row=0, column=3)
+            tk.Label(row, text=item.get("phase", item["status"]), width=26, anchor="w", fg="#667085").grid(row=1, column=0, columnspan=4, sticky="w")
             if item["status"] in {"Queued", "Uploading"}:
                 self._queue_action_button(row, "stop", "Pause", lambda upload_id=item["id"]: self.pause_upload(upload_id)).grid(row=0, column=4, padx=(12, 4))
             elif item["status"] == "Paused":
@@ -350,18 +357,39 @@ class UploadActionsMixin:
         if self.upload_queue_running: return
         item = next((entry for entry in self.upload_queue if entry["status"] == "Queued"), None)
         if not item: return
-        self.upload_queue_running = True; item["status"] = "Uploading"; self.refresh_upload_queue(); self.upload_status.configure(text=f"Uploading {item['path'].name}...")
-        def progress(done, total): self.after(0, lambda: self.upload_progress(item, int(done * 100 / total) if total else 100))
+        self.upload_queue_running = True; item["status"] = "Uploading"; item["phase"] = "Uploading original" if item["mode"] != "Upload HLS only" else "Preparing source"; self.refresh_upload_queue(); self.upload_status.configure(text=f"{item['phase']}: {item['path'].name}")
+        def progress(done, total):
+            raw_percent = int(done * 100 / total) if total else 100
+            percent = min(raw_percent, 49) if item["mode"] in {"Upload original + HLS", "Upload HLS only"} else raw_percent
+            self.after(0, lambda: self.upload_progress(item, percent, phase="Uploading original", completed_bytes=done, total_bytes=total))
         def worker():
             try:
                 if item["mode"] != "Upload HLS only":
                     self.api.upload_file(item["path"], item["destination"], progress, item["pause_requested"].is_set, item["cancel_requested"].is_set, item["upload_state"])
                 if item["mode"] in {"Upload original + HLS", "Upload HLS only"}:
-                    self.after(0, lambda: self.upload_status.configure(text=f"Generating HLS for {item['path'].name}..."))
-                    command = [sys.executable, str(Path(__file__).with_name("hls_generator.py")), "--supabase-url", self.api.url, "--supabase-key", self.api.key, "--bucket", self.api.bucket, "--video", item["destination"]]
-                    if item["mode"] == "Upload HLS only": command.extend(["--source", str(item["path"])])
-                    result = subprocess.run(command, cwd=str(Path(__file__).parent), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-                    if result.returncode: raise RuntimeError(result.stdout or result.stderr or "HLS generation failed.")
+                    command = [sys.executable, str(Path(__file__).with_name("hls_generator.py")), "--supabase-url", self.api.url, "--supabase-key", self.api.key, "--bucket", self.api.bucket, "--video", item["destination"], "--job-id", item["id"]]
+                    command.extend(["--source", str(item["path"]), "--source-size", str(item["source_size"]), "--source-mtime-ns", str(item["source_mtime_ns"])])
+                    process = subprocess.Popen(command, cwd=str(Path(__file__).parent), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
+                    stderr_lines = []
+                    stderr_thread = threading.Thread(target=lambda: stderr_lines.extend(process.stderr.readlines()) if process.stderr else None, daemon=True)
+                    stderr_thread.start()
+                    if process.stdout:
+                        for line in process.stdout:
+                            if item["cancel_requested"].is_set() or item["status"] == "Removing...":
+                                process.terminate(); process.wait(timeout=10)
+                                raise UploadCancelled()
+                            if item["pause_requested"].is_set():
+                                process.terminate(); process.wait(timeout=10)
+                                raise UploadPaused()
+                            try:
+                                event = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            self.after(0, lambda event=event: self.upload_event(item, event))
+                    return_code = process.wait()
+                    if return_code:
+                        detail = stderr_lines[-1].strip() if stderr_lines else "HLS generation failed."
+                        raise RuntimeError(detail)
                 self.after(0, lambda: self.upload_finished(item, None))
             except UploadPaused:
                 self.after(0, lambda: self.upload_paused(item))
@@ -371,15 +399,45 @@ class UploadActionsMixin:
                 self.after(0, lambda error=exc: self.upload_finished(item, error))
         threading.Thread(target=worker, daemon=True).start()
 
-    def upload_progress(self, item, percent):
-        item["progress"] = percent; self.refresh_upload_queue(); self.upload_status.configure(text=f"Uploading {item['path'].name}... {percent}%")
+    def upload_progress(self, item, percent, phase=None, **fields):
+        item["progress"] = max(item.get("progress", 0), percent)
+        if phase: item["phase"] = phase
+        item["progress_state"].update(fields)
+        self.refresh_upload_queue(); self.upload_status.configure(text=f"{item.get('phase', 'Uploading')}: {item['path'].name}... {item['progress']}%")
+
+    def upload_event(self, item, event):
+        if event.get("version") != 1 or event.get("job_id") != item["id"]:
+            return
+        phase_names = {
+            "preparing_source": "Preparing source",
+            "generating_hls": "Generating HLS",
+            "uploading_segments": "Uploading HLS segments",
+            "finalizing_manifest": "Finalizing HLS manifest",
+            "complete": "Complete",
+            "failed": "Failed",
+        }
+        phase = phase_names.get(event.get("phase"), item.get("phase", "Uploading"))
+        fields = {key: value for key, value in event.items() if key not in {"version", "job_id", "phase", "event", "timestamp"}}
+        item["phase"] = phase
+        item["progress_state"].update(fields)
+        if event.get("phase") == "uploading_segments" and event.get("event") == "progress":
+            total = int(event.get("total_bytes") or 0)
+            done = int(event.get("completed_bytes") or 0)
+            percent = 50 + int(done * 49 / total) if total else item["progress"]
+            self.upload_progress(item, min(percent, 99), phase=phase, **fields)
+        elif event.get("phase") == "complete":
+            item["progress"] = 100
+            self.refresh_upload_queue()
+        else:
+            self.refresh_upload_queue()
+        self.upload_status.configure(text=f"{phase}: {item['path'].name}")
 
     def upload_finished(self, item, error):
         if item not in self.upload_queue: return
         if item["cancel_requested"].is_set() or item["status"] == "Removing...":
             self.upload_cancelled(item)
             return
-        self.upload_queue_running = False; item["status"] = "Failed" if error else "Complete"; item["progress"] = 0 if error else 100; self.refresh_upload_queue()
+        self.upload_queue_running = False; item["status"] = "Failed" if error else "Complete"; item["phase"] = "Failed" if error else "Complete"; item["progress"] = item.get("progress", 0) if error else 100; self.refresh_upload_queue()
         if error: messagebox.showerror("Upload failed", str(error), parent=self)
         self.load_upload_folder(self.upload_path)
         if not error: self.after(5000, lambda: self.expire_upload_item(item))
@@ -389,18 +447,21 @@ class UploadActionsMixin:
         if item not in self.upload_queue: return
         self.upload_queue_running = False
         item["status"] = "Paused"
+        item["phase"] = "Paused"
         self.refresh_upload_queue()
         self.start_next_upload()
 
     def upload_cancelled(self, item):
         if item not in self.upload_queue: return
         self.upload_queue_running = False
-        self.upload_queue.remove(item)
+        item["status"] = "Cancelled"
+        item["phase"] = "Cancelled"
         self.refresh_upload_queue()
+        self.after(5000, lambda: self.expire_upload_item(item))
         self.start_next_upload()
 
     def expire_upload_item(self, item):
-        if item in self.upload_queue and item["status"] == "Complete":
+        if item in self.upload_queue and item["status"] in {"Complete", "Cancelled"}:
             self.upload_queue.remove(item)
             self.refresh_upload_queue()
 

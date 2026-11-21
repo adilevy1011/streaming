@@ -38,6 +38,21 @@ def emit_event(job_id: str, phase: str, event: str, **fields: object) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
 
+def validate_local_source(path: str | Path, expected_size: int | None = None, expected_mtime_ns: int | None = None) -> Path:
+    source = Path(path)
+    try:
+        stat = source.stat()
+    except OSError as exc:
+        raise RuntimeError(f"Local HLS source is unavailable: {source}") from exc
+    if not source.is_file():
+        raise RuntimeError(f"Local HLS source is not a file: {source}")
+    if expected_size is not None and stat.st_size != expected_size:
+        raise RuntimeError(f"Local HLS source changed size after upload: {source}")
+    if expected_mtime_ns is not None and stat.st_mtime_ns != expected_mtime_ns:
+        raise RuntimeError(f"Local HLS source changed after upload: {source}")
+    return source
+
+
 def encoded_path(path: str) -> str:
     return "/".join(quote(part, safe="") for part in path.split("/"))
 
@@ -81,8 +96,13 @@ def upload(url: str, key: str, body: bytes, content_type: str) -> None:
         raise RuntimeError(f"Storage upload failed: {exc.reason}") from exc
 
 
-def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local_source: str | None = None, job_id: str | None = None) -> None:
+def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local_source: str | None = None, job_id: str | None = None, source_size: int | None = None, source_mtime_ns: int | None = None) -> None:
     job_id = job_id or str(uuid.uuid4())
+    validated_local_source = None
+    if local_source:
+        emit_event(job_id, "preparing_source", "started", source="local")
+        validated_local_source = validate_local_source(local_source, source_size, source_mtime_ns)
+        emit_event(job_id, "preparing_source", "completed", source="local")
     prefix = hls_prefix(video)
     base_url = f"{supabase_url.rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}"
     manifest_url = f"{base_url}/{encoded_path(prefix + '/index.m3u8')}"
@@ -94,17 +114,14 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
         work_path = Path(work)
         source = work_path / "source"
         output = work_path
-        if local_source:
-            source = Path(local_source)
+        if validated_local_source:
+            source = validated_local_source
         else:
             source_url = f"{base_url}/{encoded_path(video)}"
             emit_event(job_id, "preparing_source", "started")
             with request(source_url, key) as response, source.open("wb") as destination:
                 shutil.copyfileobj(response, destination, length=1024 * 1024)
             emit_event(job_id, "preparing_source", "completed", source="remote")
-
-        if local_source:
-            emit_event(job_id, "preparing_source", "completed", source="local")
 
         command = [
             ffmpeg, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:2", "-y", "-i", str(source),
@@ -155,10 +172,12 @@ def main() -> int:
     parser.add_argument("--video", required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--source", help="Use this local source instead of downloading the original.")
+    parser.add_argument("--source-size", type=int)
+    parser.add_argument("--source-mtime-ns", type=int)
     parser.add_argument("--job-id")
     args = parser.parse_args()
     try:
-        run(args.video, args.supabase_url, args.supabase_key, args.bucket, args.ffmpeg, args.source, args.job_id)
+        run(args.video, args.supabase_url, args.supabase_key, args.bucket, args.ffmpeg, args.source, args.job_id, args.source_size, args.source_mtime_ns)
     except Exception as exc:
         emit_event(args.job_id or "unknown", "failed", "failed", error=str(exc), actionable_error=str(exc))
         raise

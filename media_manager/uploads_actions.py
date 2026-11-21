@@ -250,6 +250,8 @@ class UploadActionsMixin:
             "upload_state": {},
             "phase": "Queued",
             "progress_state": {},
+            "source_size": local_path.stat().st_size,
+            "source_mtime_ns": local_path.stat().st_mtime_ns,
         }
         self.upload_queue.append(item)
         self.open_upload_queue()
@@ -366,7 +368,7 @@ class UploadActionsMixin:
                     self.api.upload_file(item["path"], item["destination"], progress, item["pause_requested"].is_set, item["cancel_requested"].is_set, item["upload_state"])
                 if item["mode"] in {"Upload original + HLS", "Upload HLS only"}:
                     command = [sys.executable, str(Path(__file__).with_name("hls_generator.py")), "--supabase-url", self.api.url, "--supabase-key", self.api.key, "--bucket", self.api.bucket, "--video", item["destination"], "--job-id", item["id"]]
-                    if item["mode"] == "Upload HLS only": command.extend(["--source", str(item["path"])])
+                    command.extend(["--source", str(item["path"]), "--source-size", str(item["source_size"]), "--source-mtime-ns", str(item["source_mtime_ns"])])
                     process = subprocess.Popen(command, cwd=str(Path(__file__).parent), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
                     stderr_lines = []
                     stderr_thread = threading.Thread(target=lambda: stderr_lines.extend(process.stderr.readlines()) if process.stderr else None, daemon=True)

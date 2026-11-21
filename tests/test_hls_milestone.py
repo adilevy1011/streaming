@@ -1,8 +1,9 @@
 import json
 import unittest
+from pathlib import Path
 
 from backend.catalog_safety import filter_cached_media, filter_catalog_videos, is_hls_manifest_path, is_hls_segment_path, validate_hls_playlist
-from media_manager.hls_generator import EVENT_VERSION, hls_prefix
+from media_manager.hls_generator import EVENT_VERSION, hls_prefix, validate_local_source
 
 
 class HlsMilestoneTests(unittest.TestCase):
@@ -40,6 +41,15 @@ class HlsMilestoneTests(unittest.TestCase):
         payload = {"version": EVENT_VERSION, "job_id": "job-1", "phase": "complete", "event": "complete"}
         self.assertEqual(json.loads(json.dumps(payload))["version"], 1)
         self.assertEqual(hls_prefix("Movies/Film.mp4"), "Movies/Film-hls")
+
+    def test_local_source_identity_is_checked(self):
+        path = Path(__file__).resolve().parents[1] / "media_manager" / "hls_generator.py"
+        stat = path.stat()
+        self.assertEqual(validate_local_source(path, stat.st_size, stat.st_mtime_ns), path)
+        with self.assertRaisesRegex(RuntimeError, "changed size"):
+            validate_local_source(path, stat.st_size + 1, stat.st_mtime_ns)
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            validate_local_source(path.with_name("missing-source.mp4"), stat.st_size, stat.st_mtime_ns)
 
 
 if __name__ == "__main__":

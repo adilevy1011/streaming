@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from backend.catalog_safety import filter_cached_media, filter_catalog_videos, is_hls_manifest_path, is_hls_segment_path, validate_hls_playlist
-from media_manager.hls_generator import EVENT_VERSION, StorageUploadError, checkpoint_identity, hls_prefix, is_retryable_upload_error, retry_delay_seconds, validate_local_source, verified_segments
+from media_manager.hls_generator import EVENT_VERSION, CACHE_VERSION, StorageUploadError, checkpoint_identity, hls_prefix, is_retryable_upload_error, manifest_metadata_matches, manifest_segment_names, retry_delay_seconds, validate_local_source, verified_segments
 from media_manager.hls_benchmark import parse_progress
 
 
@@ -68,6 +68,12 @@ class HlsMilestoneTests(unittest.TestCase):
         fields = parse_progress("frame=10\nout_time_us=2500000\nspeed=1.5x\nprogress=end\n")
         self.assertEqual(fields["out_time_us"], "2500000")
         self.assertEqual(fields["speed"], "1.5x")
+
+    def test_manifest_skip_requires_metadata_and_referenced_segments(self):
+        text = f"#EXTM3U\n#ADLV-HLS-FORMAT={CACHE_VERSION}\n#ADLV-SOURCE-SIZE=10\n#ADLV-SOURCE-MTIME-NS=20\n#EXTINF:6,\nsegment-00000.ts\n#EXT-X-ENDLIST\n"
+        self.assertEqual(manifest_segment_names(text), ["segment-00000.ts"])
+        self.assertTrue(manifest_metadata_matches(text, 10, 20))
+        self.assertFalse(manifest_metadata_matches(text, 11, 20))
 
 
 if __name__ == "__main__":

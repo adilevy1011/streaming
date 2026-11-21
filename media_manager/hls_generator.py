@@ -165,6 +165,24 @@ def verified_segments(expected: dict[str, int], remote: dict[str, int]) -> dict[
     return {name: size for name, size in expected.items() if remote.get(name) == size}
 
 
+def manifest_segment_names(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip().startswith("segment-") and line.strip().endswith(".ts")]
+
+
+def manifest_metadata_matches(text: str, source_size: int, source_mtime_ns: int) -> bool:
+    required = {
+        "#ADLV-HLS-FORMAT": CACHE_VERSION,
+        "#ADLV-SOURCE-SIZE": str(source_size),
+        "#ADLV-SOURCE-MTIME-NS": str(source_mtime_ns),
+    }
+    found = {}
+    for line in text.splitlines():
+        if "=" in line and line.startswith("#ADLV-"):
+            name, value = line.split("=", 1)
+            found[name] = value
+    return all(found.get(name) == value for name, value in required.items())
+
+
 def encoded_path(path: str) -> str:
     return "/".join(quote(part, safe="") for part in path.split("/"))
 
@@ -237,9 +255,6 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
     prefix = hls_prefix(video)
     base_url = f"{supabase_url.rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}"
     manifest_url = f"{base_url}/{encoded_path(prefix + '/index.m3u8')}"
-    if request(manifest_url, key, allow_missing=True) is not None:
-        emit_event(job_id, "complete", "complete", overall_percent=100)
-        return
 
     with tempfile.TemporaryDirectory(prefix="adlv-hls-") as work:
         work_path = Path(work)
@@ -255,6 +270,22 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
             emit_event(job_id, "preparing_source", "completed", source="remote")
 
         source_stat = source.stat()
+        existing_manifest = request(manifest_url, key, allow_missing=True)
+        if existing_manifest is not None:
+            with existing_manifest:
+                existing_text = existing_manifest.read().decode("utf-8", errors="replace")
+            remote_sizes = remote_segment_sizes(supabase_url, key, bucket, prefix)
+            referenced = manifest_segment_names(existing_text)
+            complete = (
+                existing_text.startswith("#EXTM3U")
+                and "#EXT-X-ENDLIST" in existing_text
+                and bool(referenced)
+                and all(name in remote_sizes and remote_sizes[name] > 0 for name in referenced)
+                and manifest_metadata_matches(existing_text, source_stat.st_size, source_stat.st_mtime_ns)
+            )
+            if complete:
+                emit_event(job_id, "complete", "complete", overall_percent=100, resumed_manifest=True)
+                return
         identity = checkpoint_identity(video, source_stat.st_size, source_stat.st_mtime_ns)
         checkpoint = checkpoint_path(video, source_stat.st_size, source_stat.st_mtime_ns)
         checkpoint_data = load_checkpoint(checkpoint, identity)
@@ -285,7 +316,13 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
         if return_code:
             raise RuntimeError(f"FFmpeg exited with status {return_code}.")
         emit_event(job_id, "generating_hls", "completed")
-        manifest = (output / "index.m3u8").read_bytes()
+        manifest_text = (output / "index.m3u8").read_text(encoding="utf-8")
+        manifest_text = manifest_text.replace(
+            "#EXTM3U\n",
+            f"#EXTM3U\n#ADLV-HLS-FORMAT={CACHE_VERSION}\n#ADLV-SOURCE-SIZE={source_stat.st_size}\n#ADLV-SOURCE-MTIME-NS={source_stat.st_mtime_ns}\n",
+            1,
+        )
+        manifest = manifest_text.encode("utf-8")
         segments = sorted(output.glob("segment-*.ts"))
         total_bytes = sum(segment.stat().st_size for segment in segments)
         expected_sizes = {segment.name: segment.stat().st_size for segment in segments}

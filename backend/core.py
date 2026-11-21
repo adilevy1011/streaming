@@ -15,6 +15,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
+try:
+    from catalog_safety import filter_catalog_videos
+except ImportError:
+    from .catalog_safety import filter_catalog_videos
+try:
+    import hls
+except ImportError:
+    from . import hls
 
 try:
     import redis.asyncio as redis
@@ -292,6 +300,12 @@ def catalog_folder_artworks(video_path: str, image_rows: list[dict[str, Any]]) -
 
 def catalog_videos(token: str, path: str = "") -> list[dict[str, Any]]:
     rows = catalog_rows(token, "videos", "path,name,folder_path,created_at,updated_at,subtitle_path,preview_image_path,preview_image_updated_at")
+    rows = filter_catalog_videos(rows)
+    rows = [
+        row for row in rows
+        if not row.get("path", "").lower().endswith("-hls/index.m3u8")
+        or hls.remote_manifest_is_complete(row["path"], supabase_headers(token))
+    ]
     image_rows = catalog_rows(token, "media_objects", "path,name,folder_path,updated_at", {"kind": "eq.image"})
     images = {(image.get("folder_path", ""), image.get("name", "").rsplit(".", 1)[0].casefold()): image for image in image_rows}
     prefix = f"{path.rstrip('/')}/" if path else ""

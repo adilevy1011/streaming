@@ -11,11 +11,13 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import shutil
 import subprocess
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -23,6 +25,45 @@ from urllib.request import Request, urlopen
 
 CACHE_VERSION = "hls-v6"
 EVENT_VERSION = 1
+DEFAULT_UPLOAD_WORKERS = 1
+DEFAULT_MAX_RETRIES = 5
+RETRY_BASE_SECONDS = 1.0
+RETRY_MAX_SECONDS = 30.0
+
+
+class StorageUploadError(RuntimeError):
+    def __init__(self, message: str, status_code: int | None = None, retry_after: float | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+def upload_workers() -> int:
+    try:
+        return max(1, int(os.environ.get("HLS_UPLOAD_WORKERS", str(DEFAULT_UPLOAD_WORKERS))))
+    except ValueError:
+        return DEFAULT_UPLOAD_WORKERS
+
+
+def max_retries() -> int:
+    try:
+        return max(0, int(os.environ.get("HLS_MAX_RETRIES", str(DEFAULT_MAX_RETRIES))))
+    except ValueError:
+        return DEFAULT_MAX_RETRIES
+
+
+def is_retryable_upload_error(error: BaseException) -> bool:
+    if isinstance(error, StorageUploadError):
+        return error.status_code is None or error.status_code in {408, 429} or error.status_code >= 500
+    return isinstance(error, (TimeoutError, URLError))
+
+
+def retry_delay_seconds(error: BaseException, retry_number: int) -> float:
+    retry_after = getattr(error, "retry_after", None)
+    if retry_after is not None:
+        return min(RETRY_MAX_SECONDS, max(0.0, retry_after))
+    exponential = min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * (2 ** max(0, retry_number - 1)))
+    return min(RETRY_MAX_SECONDS, exponential + random.uniform(0, exponential * 0.25))
 
 
 def emit_event(job_id: str, phase: str, event: str, **fields: object) -> None:
@@ -91,9 +132,28 @@ def upload(url: str, key: str, body: bytes, content_type: str) -> None:
                 raise RuntimeError(f"Storage upload failed ({response.status})")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"Storage upload failed ({exc.code}): {detail}") from exc
+        retry_after = None
+        try:
+            retry_after = float(exc.headers.get("Retry-After")) if exc.headers.get("Retry-After") else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise StorageUploadError(f"Storage upload failed ({exc.code}): {detail}", exc.code, retry_after) from exc
     except URLError as exc:
-        raise RuntimeError(f"Storage upload failed: {exc.reason}") from exc
+        raise StorageUploadError(f"Storage upload failed: {exc.reason}") from exc
+
+
+def upload_with_retries(url: str, key: str, body: bytes, content_type: str, retries: int | None = None) -> int:
+    max_attempts = max_retries() if retries is None else max(0, retries)
+    retry_count = 0
+    while True:
+        try:
+            upload(url, key, body, content_type)
+            return retry_count
+        except Exception as exc:
+            if retry_count >= max_attempts or not is_retryable_upload_error(exc):
+                raise RuntimeError(f"{exc} (retries={retry_count})") from exc
+            retry_count += 1
+            time.sleep(retry_delay_seconds(exc, retry_count))
 
 
 def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local_source: str | None = None, job_id: str | None = None, source_size: int | None = None, source_mtime_ns: int | None = None) -> None:
@@ -153,13 +213,37 @@ def run(video: str, supabase_url: str, key: str, bucket: str, ffmpeg: str, local
         segments = sorted(output.glob("segment-*.ts"))
         total_bytes = sum(segment.stat().st_size for segment in segments)
         completed_bytes = 0
-        emit_event(job_id, "uploading_segments", "started", total_segments=len(segments), total_bytes=total_bytes, completed_segments=0, completed_bytes=0)
-        for index, segment in enumerate(segments, 1):
-            upload(f"{base_url}/{encoded_path(prefix + '/' + segment.name)}", key, segment.read_bytes(), "video/mp2t")
-            completed_bytes += segment.stat().st_size
-            emit_event(job_id, "uploading_segments", "progress", segment=segment.name, segment_index=index, total_segments=len(segments), completed_segments=index, total_bytes=total_bytes, completed_bytes=completed_bytes)
+        workers = upload_workers()
+        retries = max_retries()
+        emit_event(job_id, "uploading_segments", "started", total_segments=len(segments), total_bytes=total_bytes, completed_segments=0, completed_bytes=0, workers=workers, max_retries=retries)
+
+        def upload_segment(index: int, segment: Path) -> tuple[int, str, int, int]:
+            body = segment.read_bytes()
+            object_path = prefix + "/" + segment.name
+            try:
+                retry_count = upload_with_retries(
+                    f"{base_url}/{encoded_path(object_path)}", key, body, "video/mp2t", retries
+                )
+            except Exception as exc:
+                raise RuntimeError(f"HLS segment upload failed: {object_path}: {exc}") from exc
+            return index, segment.name, len(body), retry_count
+
+        if workers == 1:
+            results = (upload_segment(index, segment) for index, segment in enumerate(segments, 1))
+            for index, name, size, retry_count in results:
+                completed_bytes += size
+                emit_event(job_id, "uploading_segments", "progress", segment=name, segment_index=index, total_segments=len(segments), completed_segments=(index if workers == 1 else 0), total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=retry_count)
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hls-upload") as executor:
+                futures = [executor.submit(upload_segment, index, segment) for index, segment in enumerate(segments, 1)]
+                completed_segments = 0
+                for future in as_completed(futures):
+                    index, name, size, retry_count = future.result()
+                    completed_segments += 1
+                    completed_bytes += size
+                    emit_event(job_id, "uploading_segments", "progress", segment=name, segment_index=index, total_segments=len(segments), completed_segments=completed_segments, total_bytes=total_bytes, completed_bytes=completed_bytes, retry_count=retry_count)
         emit_event(job_id, "finalizing_manifest", "started")
-        upload(manifest_url, key, manifest, "application/vnd.apple.mpegurl")
+        upload_with_retries(manifest_url, key, manifest, "application/vnd.apple.mpegurl", retries)
         emit_event(job_id, "finalizing_manifest", "completed")
     emit_event(job_id, "complete", "complete", overall_percent=100)
 

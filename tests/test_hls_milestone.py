@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from backend.catalog_safety import filter_cached_media, filter_catalog_videos, is_hls_manifest_path, is_hls_segment_path, validate_hls_playlist
-from media_manager.hls_generator import EVENT_VERSION, hls_prefix, validate_local_source
+from media_manager.hls_generator import EVENT_VERSION, StorageUploadError, hls_prefix, is_retryable_upload_error, retry_delay_seconds, validate_local_source
 
 
 class HlsMilestoneTests(unittest.TestCase):
@@ -50,6 +50,12 @@ class HlsMilestoneTests(unittest.TestCase):
             validate_local_source(path, stat.st_size + 1, stat.st_mtime_ns)
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             validate_local_source(path.with_name("missing-source.mp4"), stat.st_size, stat.st_mtime_ns)
+
+    def test_retry_policy_distinguishes_transient_and_permanent_errors(self):
+        self.assertTrue(is_retryable_upload_error(StorageUploadError("busy", 503)))
+        self.assertTrue(is_retryable_upload_error(StorageUploadError("rate limited", 429)))
+        self.assertFalse(is_retryable_upload_error(StorageUploadError("unauthorized", 401)))
+        self.assertEqual(retry_delay_seconds(StorageUploadError("retry", 503, 2), 1), 2)
 
 
 if __name__ == "__main__":

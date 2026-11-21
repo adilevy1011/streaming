@@ -4,6 +4,7 @@ from pathlib import Path
 
 from backend.catalog_safety import filter_cached_media, filter_catalog_videos, is_hls_manifest_path, is_hls_segment_path, validate_hls_playlist
 from media_manager.hls_generator import EVENT_VERSION, StorageUploadError, checkpoint_identity, hls_prefix, is_retryable_upload_error, retry_delay_seconds, validate_local_source, verified_segments
+from media_manager.hls_benchmark import parse_progress
 
 
 class HlsMilestoneTests(unittest.TestCase):
@@ -62,6 +63,11 @@ class HlsMilestoneTests(unittest.TestCase):
         self.assertEqual(identity["format"], "hls-v6")
         expected = {"segment-00000.ts": 10, "segment-00001.ts": 20}
         self.assertEqual(verified_segments(expected, {"segment-00000.ts": 10, "segment-00001.ts": 19}), {"segment-00000.ts": 10})
+
+    def test_benchmark_progress_parser_uses_stable_ffmpeg_fields(self):
+        fields = parse_progress("frame=10\nout_time_us=2500000\nspeed=1.5x\nprogress=end\n")
+        self.assertEqual(fields["out_time_us"], "2500000")
+        self.assertEqual(fields["speed"], "1.5x")
 
 
 if __name__ == "__main__":
